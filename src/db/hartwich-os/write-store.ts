@@ -1,4 +1,4 @@
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { getHartwichOsDb } from "./client.js";
 import { activities, companies, contacts, deals, emailDrafts, messages, pipelineStages } from "./schema.js";
 
@@ -53,7 +53,7 @@ export type RecordOutboundEmailInput = {
   companyId: string;
   contactId: string | null;
   dealId: string;
-  kind: "cold_outreach" | "follow_up";
+  kind: "cold_outreach" | "follow_up" | "reply";
   accountIndex: 0 | 1 | 2;
   to: string;
   fromAddress: string;
@@ -65,6 +65,19 @@ export type RecordOutboundEmailInput = {
 
 export type RecordOutboundEmailResult = { activityId: string; messageId: string };
 
+export type RecordInboundReplyInput = {
+  companyId: string;
+  contactId: string | null;
+  dealId: string | null;
+  fromAddress: string;
+  subject: string;
+  body: string;
+  providerMessageId: string;
+  threadId: string;
+};
+
+export type RecordInboundReplyResult = { activityId: string; messageId: string };
+
 /**
  * The write path into hartwich-os's CRM — kept behind an interface
  * (rather than tools calling Drizzle directly) so tests can substitute an
@@ -75,6 +88,9 @@ export interface HartwichWriteStore {
   persistDiscoveredCompany(input: PersistDiscoveredCompanyInput): Promise<PersistDiscoveredCompanyResult>;
   createEmailDraft(input: CreateEmailDraftInput): Promise<CreateEmailDraftResult>;
   recordOutboundEmail(input: RecordOutboundEmailInput): Promise<RecordOutboundEmailResult>;
+  recordInboundReply(input: RecordInboundReplyInput): Promise<RecordInboundReplyResult>;
+  moveDealToLostStage(dealId: string): Promise<void>;
+  flagDealForReview(dealId: string): Promise<void>;
 }
 
 /**
@@ -240,7 +256,7 @@ export class PostgresHartwichWriteStore implements HartwichWriteStore {
             updatedAt: now,
           })
           .where(eq(deals.id, input.dealId));
-      } else {
+      } else if (input.kind === "follow_up") {
         await tx
           .update(deals)
           .set({
@@ -251,9 +267,94 @@ export class PostgresHartwichWriteStore implements HartwichWriteStore {
             updatedAt: now,
           })
           .where(eq(deals.id, input.dealId));
+      } else {
+        // reply: already in Engaged (recordInboundReply moved it there when
+        // the inbound message came in) — just keep the cadence clock
+        // current, same as hartwich-os's own applyPostSendDealUpdate.
+        await tx.update(deals).set({ lastOutboundEmailAt: now, updatedAt: now }).where(eq(deals.id, input.dealId));
       }
 
       return { activityId: activity.id, messageId: message.id };
     });
+  }
+
+  /**
+   * Records a genuine inbound reply (Phase 6) — mirrors hartwich-os's own
+   * sync-replies.ts: log the inbound activity/message, mark the original
+   * sent message "replied", clear any pending follow-up flag (a reply
+   * supersedes the cadence — src/outreach/followup-cadence.ts's
+   * isFollowUpDue also independently stops once lastInboundEmailAt is set,
+   * this just keeps the flag itself tidy), and move Contacted -> Engaged.
+   * hartwich-os doesn't special-case an out-of-office auto-reply here
+   * either — same simplicity, not a gap unique to this repo.
+   */
+  async recordInboundReply(input: RecordInboundReplyInput): Promise<RecordInboundReplyResult> {
+    const db = getHartwichOsDb();
+    const now = new Date();
+
+    return db.transaction(async (tx) => {
+      const [activity] = await tx
+        .insert(activities)
+        .values({
+          companyId: input.companyId,
+          contactId: input.contactId,
+          dealId: input.dealId,
+          type: "email",
+          direction: "inbound",
+          bodyText: input.body,
+          aiGenerated: false,
+          occurredAt: now,
+        })
+        .returning();
+
+      const [message] = await tx
+        .insert(messages)
+        .values({
+          activityId: activity.id,
+          provider: "gmail",
+          providerMessageId: input.providerMessageId,
+          threadId: input.threadId,
+          status: "delivered",
+          fromAddress: input.fromAddress,
+          subject: input.subject,
+          body: input.body,
+          generatedByAi: false,
+        })
+        .returning();
+
+      await tx.update(messages).set({ status: "replied" }).where(and(eq(messages.threadId, input.threadId), eq(messages.provider, "gmail")));
+
+      if (input.dealId) {
+        const [engagedStage] = await tx.select().from(pipelineStages).where(eq(pipelineStages.name, "Engaged")).limit(1);
+        await tx
+          .update(deals)
+          .set({
+            lastInboundEmailAt: now,
+            followUpFlaggedAt: null,
+            updatedAt: now,
+            ...(engagedStage ? { stageId: engagedStage.id, stageEnteredAt: now } : {}),
+          })
+          .where(eq(deals.id, input.dealId));
+      }
+
+      return { activityId: activity.id, messageId: message.id };
+    });
+  }
+
+  /** NOT_INTERESTED/ALREADY_HAS_SOLUTION (Phase 6) — closing the loop means the deal exits the active pipeline, not just "no more follow-ups." */
+  async moveDealToLostStage(dealId: string): Promise<void> {
+    const db = getHartwichOsDb();
+    const [lostStage] = await db.select().from(pipelineStages).where(eq(pipelineStages.name, "Lost")).limit(1);
+    if (!lostStage) return;
+    await db
+      .update(deals)
+      .set({ stageId: lostStage.id, stageEnteredAt: new Date(), updatedAt: new Date() })
+      .where(eq(deals.id, dealId));
+  }
+
+  /** PRICE/HOSTILE escalation (Phase 6) — reuses the same "needs a look" flag hartwich-os's own cadence cron sets, surfacing it the same way at the top of the board. */
+  async flagDealForReview(dealId: string): Promise<void> {
+    const db = getHartwichOsDb();
+    await db.update(deals).set({ followUpFlaggedAt: new Date(), updatedAt: new Date() }).where(eq(deals.id, dealId));
   }
 }

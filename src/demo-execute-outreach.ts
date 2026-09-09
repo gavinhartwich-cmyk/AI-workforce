@@ -18,7 +18,8 @@ import { createGetOutreachTargetTool, type OutreachTarget } from "./tools/get-ou
 import { createSendEmailTool } from "./tools/send-email.js";
 import { createRecordOutboundEmailTool } from "./tools/record-outbound-email.js";
 import type { GmailSender, SendEmailInput, SendEmailResult } from "./integrations/gmail.js";
-import type { HartwichWriteStore, RecordOutboundEmailInput } from "./db/hartwich-os/write-store.js";
+import type { RecordOutboundEmailInput } from "./db/hartwich-os/write-store.js";
+import { NotImplementedWriteStore } from "./db/hartwich-os/write-store-stub.js";
 import type { OptOutStore } from "./outreach/opt-out-store.js";
 import type { OutreachControlStore } from "./outreach/outreach-control-store.js";
 import type { EmailAccountsStore, EmailAccountState } from "./db/hartwich-os/email-accounts-store.js";
@@ -57,13 +58,7 @@ class PrintingGmailSender implements GmailSender {
   }
 }
 
-class PrintingRecordStore implements HartwichWriteStore {
-  async persistDiscoveredCompany(): Promise<never> {
-    throw new Error("not used by this demo");
-  }
-  async createEmailDraft(): Promise<never> {
-    throw new Error("not used by this demo");
-  }
+class PrintingRecordStore extends NotImplementedWriteStore {
   async recordOutboundEmail(_input: RecordOutboundEmailInput) {
     console.log(`\n  → would record this as a hartwich-os activity/message and move the deal to "Contacted".`);
     return { activityId: "demo-activity-1", messageId: "demo-message-1" };

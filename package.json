@@ -15,6 +15,7 @@
     "demo:goal-status": "tsx src/demo-goal-status.ts",
     "demo:outreach": "tsx src/demo-outreach.ts",
     "demo:execute-outreach": "tsx src/demo-execute-outreach.ts",
+    "demo:handle-replies": "tsx src/demo-handle-replies.ts",
     "outreach:control": "tsx src/cli/outreach-control.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"

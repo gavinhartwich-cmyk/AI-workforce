@@ -7,6 +7,10 @@ const InputSchema = z.object({
   to: z.string().email(),
   subject: z.string().min(1),
   body: z.string().min(1),
+  // Set all three (Phase 6) to send in-thread as a reply — never set for a first-touch cold email or a follow-up.
+  inReplyTo: z.string().optional(),
+  references: z.string().optional(),
+  threadId: z.string().optional(),
 });
 
 /**

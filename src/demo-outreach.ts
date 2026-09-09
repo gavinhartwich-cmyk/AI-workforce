@@ -16,7 +16,8 @@ import { InMemoryAuditSink } from "./runtime/audit-sink.js";
 import { DEFAULT_POLICY_RULES } from "./policy/default-rules.js";
 import { createGetOutreachTargetTool, type OutreachTarget } from "./tools/get-outreach-target.js";
 import { createCreateEmailDraftTool } from "./tools/create-email-draft.js";
-import type { HartwichWriteStore, CreateEmailDraftInput, PersistDiscoveredCompanyInput } from "./db/hartwich-os/write-store.js";
+import type { CreateEmailDraftInput } from "./db/hartwich-os/write-store.js";
+import { NotImplementedWriteStore } from "./db/hartwich-os/write-store-stub.js";
 import { StrategizeAndDraftOutreachPipeline } from "./pipelines/strategize-and-draft-outreach.js";
 import { assignVariant } from "./experiments/assignment.js";
 import type { Experiment } from "./experiments/types.js";
@@ -44,19 +45,12 @@ const FIXTURE_TARGET: OutreachTarget = {
   dealStageName: "New Lead",
 };
 
-class PrintingDraftStore implements HartwichWriteStore {
-  async persistDiscoveredCompany(input: PersistDiscoveredCompanyInput): Promise<never> {
-    void input;
-    throw new Error("not used by this demo — see demo-discover.ts for Phase 2");
-  }
+class PrintingDraftStore extends NotImplementedWriteStore {
   async createEmailDraft(input: CreateEmailDraftInput) {
     console.log(`\n  → would create a "${input.kind}" draft (pending_review) in hartwich-os:`);
     console.log(`    Subject: ${input.subject}`);
     console.log(`    Body: ${input.body}`);
     return { draftId: "demo-draft-1" };
-  }
-  async recordOutboundEmail(): Promise<never> {
-    throw new Error("not used by this demo — see demo-execute-outreach.ts for Phase 5");
   }
 }
 

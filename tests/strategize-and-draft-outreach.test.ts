@@ -9,6 +9,7 @@ import { DEFAULT_POLICY_RULES } from "../src/policy/default-rules.js";
 import { createGetOutreachTargetTool, type OutreachTarget } from "../src/tools/get-outreach-target.js";
 import { createCreateEmailDraftTool } from "../src/tools/create-email-draft.js";
 import type { HartwichWriteStore, CreateEmailDraftInput } from "../src/db/hartwich-os/write-store.js";
+import { NotImplementedWriteStore } from "../src/db/hartwich-os/write-store-stub.js";
 import { StrategizeAndDraftOutreachPipeline } from "../src/pipelines/strategize-and-draft-outreach.js";
 import type { Experiment } from "../src/experiments/types.js";
 
@@ -33,17 +34,11 @@ const TARGET: OutreachTarget = {
   dealStageName: "New Lead",
 };
 
-class FakeDraftStore implements HartwichWriteStore {
+class FakeDraftStore extends NotImplementedWriteStore {
   drafts: CreateEmailDraftInput[] = [];
-  async persistDiscoveredCompany(): Promise<never> {
-    throw new Error("not used by this test");
-  }
   async createEmailDraft(input: CreateEmailDraftInput) {
     this.drafts.push(input);
     return { draftId: `draft-${this.drafts.length}` };
-  }
-  async recordOutboundEmail(): Promise<never> {
-    throw new Error("not used by this test — see tests/execute-outreach.test.ts for Phase 5");
   }
 }
 

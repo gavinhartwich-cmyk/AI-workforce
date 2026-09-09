@@ -11,6 +11,7 @@ import { createFindDuplicateCompanyTool } from "../src/tools/find-duplicate-comp
 import { createFetchWebsiteTextTool } from "../src/tools/fetch-website-text.js";
 import { createPersistDiscoveredCompanyTool } from "../src/tools/persist-discovered-company.js";
 import type { HartwichWriteStore, PersistDiscoveredCompanyInput } from "../src/db/hartwich-os/write-store.js";
+import { NotImplementedWriteStore } from "../src/db/hartwich-os/write-store-stub.js";
 import { DiscoverResearchQualifyPipeline } from "../src/pipelines/discover-research-qualify.js";
 
 const PLACES: PlaceCandidate[] = [
@@ -55,7 +56,7 @@ const websiteFetchFake: typeof fetch = (async () =>
   new Response("<html><body>We fix your HVAC. Contact us.</body></html>", { status: 200 })) as typeof fetch;
 
 /** In-memory fake standing in for hartwich-os's Postgres — captures every persisted lead. */
-class FakeWriteStore implements HartwichWriteStore {
+class FakeWriteStore extends NotImplementedWriteStore {
   readonly persisted: PersistDiscoveredCompanyInput[] = [];
   async persistDiscoveredCompany(input: PersistDiscoveredCompanyInput) {
     this.persisted.push(input);
@@ -64,12 +65,6 @@ class FakeWriteStore implements HartwichWriteStore {
       contactId: input.enrichment?.contactEmail ? `contact-${this.persisted.length}` : null,
       dealId: input.status === "qualified" ? `deal-${this.persisted.length}` : null,
     };
-  }
-  async createEmailDraft(): Promise<never> {
-    throw new Error("not used by this test — see tests/strategize-and-draft-outreach.test.ts for Phase 4");
-  }
-  async recordOutboundEmail(): Promise<never> {
-    throw new Error("not used by this test — see tests/execute-outreach.test.ts for Phase 5");
   }
 }
 

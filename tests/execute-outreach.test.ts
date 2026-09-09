@@ -9,7 +9,8 @@ import { createGetOutreachTargetTool, type OutreachTarget } from "../src/tools/g
 import { createSendEmailTool } from "../src/tools/send-email.js";
 import { createRecordOutboundEmailTool } from "../src/tools/record-outbound-email.js";
 import type { GmailSender, SendEmailInput, SendEmailResult } from "../src/integrations/gmail.js";
-import type { HartwichWriteStore, RecordOutboundEmailInput } from "../src/db/hartwich-os/write-store.js";
+import type { RecordOutboundEmailInput } from "../src/db/hartwich-os/write-store.js";
+import { NotImplementedWriteStore } from "../src/db/hartwich-os/write-store-stub.js";
 import type { OptOutStore } from "../src/outreach/opt-out-store.js";
 import type { OutreachControlStore, OutreachControlState } from "../src/outreach/outreach-control-store.js";
 import type { EmailAccountsStore, EmailAccountState } from "../src/db/hartwich-os/email-accounts-store.js";
@@ -60,14 +61,8 @@ class FakeGmailSender implements GmailSender {
   }
 }
 
-class FakeRecordStore implements HartwichWriteStore {
+class FakeRecordStore extends NotImplementedWriteStore {
   recorded: RecordOutboundEmailInput[] = [];
-  async persistDiscoveredCompany(): Promise<never> {
-    throw new Error("not used");
-  }
-  async createEmailDraft(): Promise<never> {
-    throw new Error("not used");
-  }
   async recordOutboundEmail(input: RecordOutboundEmailInput) {
     this.recorded.push(input);
     return { activityId: `activity-${this.recorded.length}`, messageId: `record-${this.recorded.length}` };

@@ -20,19 +20,14 @@ import { createSearchGooglePlacesTool } from "./tools/search-google-places.js";
 import { createFindDuplicateCompanyTool } from "./tools/find-duplicate-company.js";
 import { createFetchWebsiteTextTool } from "./tools/fetch-website-text.js";
 import { createPersistDiscoveredCompanyTool } from "./tools/persist-discovered-company.js";
-import type { HartwichWriteStore, PersistDiscoveredCompanyInput } from "./db/hartwich-os/write-store.js";
+import type { PersistDiscoveredCompanyInput } from "./db/hartwich-os/write-store.js";
+import { NotImplementedWriteStore } from "./db/hartwich-os/write-store-stub.js";
 import { DiscoverResearchQualifyPipeline } from "./pipelines/discover-research-qualify.js";
 
-class PrintingWriteStore implements HartwichWriteStore {
+class PrintingWriteStore extends NotImplementedWriteStore {
   async persistDiscoveredCompany(input: PersistDiscoveredCompanyInput) {
     console.log(`  → would persist "${input.place.name}" as ${input.status} (score ${input.qualificationScore})`);
     return { companyId: `demo-${input.placeId}`, contactId: null, dealId: input.status === "qualified" ? `deal-${input.placeId}` : null };
-  }
-  async createEmailDraft(): Promise<never> {
-    throw new Error("not used by this demo — see demo-outreach.ts for Phase 4");
-  }
-  async recordOutboundEmail(): Promise<never> {
-    throw new Error("not used by this demo — see demo-execute-outreach.ts for Phase 5");
   }
 }
 

@@ -256,6 +256,71 @@ that surfaces clearly.
 against fixtures — no credentials needed, and no approval step to click
 through.
 
+## Phase 6 status — done
+
+Conversation Intelligence and the Appointment Agent (`SPEC.md` §55 Phase
+6) — inbound replies get classified and handled autonomously where
+that's safe, escalated where it isn't.
+
+**These are personal 1:1 emails, not a mailing list** (Gavin,
+2026-09-XX). Nothing in this repo adds unsubscribe links, list-management
+footers, or any mechanism that would make outreach read as bulk email.
+What's real: if a person explicitly asks to stop being contacted, that's
+respected — permanently, via the same opt-out list Phase 5 built. SPEC.md
+§29's `UNSUBSCRIBE` classification category is implemented here as
+**`STOP_CONTACT`** — same enforcement, but named for what it actually is:
+someone asking a person to stop emailing them, not a list opt-out.
+
+- **`src/agents/conversation-intelligence-agent.ts`** — classifies one
+  reply (INTERESTED / QUESTION / OBJECTION / PRICE / NOT_INTERESTED /
+  NOT_NOW / ALREADY_HAS_SOLUTION / WRONG_PERSON / REFERRAL / STOP_CONTACT
+  / HOSTILE / OUT_OF_OFFICE / UNKNOWN) and extracts buying intent,
+  objections, appointment intent, sentiment, confidence. It does **not**
+  decide what happens next — same split as Qualification (Phase 2):
+  the model reports signals, `src/outreach/reply-routing.ts` (deterministic
+  code) decides the action.
+- **Routing** (`reply-routing.ts`): STOP_CONTACT → suppress, permanently.
+  PRICE/HOSTILE → escalate to Gavin, never an autonomous reply. A clear
+  no or an existing solution → close the deal Lost. A low-confidence
+  UNKNOWN → escalate rather than guess. Everything else routine
+  (INTERESTED, QUESTION, OBJECTION, NOT_NOW, WRONG_PERSON, REFERRAL, a
+  confident UNKNOWN) → an autonomous reply, through the exact same
+  send-guard Phase 5 built (opt-out/kill-switch/window/warm-up all still
+  apply to a reply).
+- **`src/agents/outreach-reply-agent.ts`** — answers what they actually
+  wrote, not a generic pitch continuation. Same "sounds like a specific
+  person, not AI" bar as Phase 4/5 (Gavin, 2026-09-XX: "it should come
+  off as 'woah this is perfect for me,'" not a template).
+- **`src/agents/appointment-agent.ts`** + **`src/outreach/booking-link.ts`**
+  — when appointment intent is detected, the reply includes a real
+  `hartwich-os/book?company=&contact=&deal=` link instead of proposing
+  times itself. "Never invent availability" (`SPEC.md` §31) is structural
+  here, not a prompt rule: the model never sees calendar data at all —
+  hartwich-os's own existing, working, Google-Calendar-backed booking page
+  does that entire job; this repo only builds the link.
+- **`src/integrations/gmail.ts`** (extended) — reading unread mail across
+  all 3 accounts and in-thread reply sending (proper In-Reply-To/
+  References headers + Gmail `threadId`), reusing the exact OAuth setup
+  Phase 5 already has.
+- **`src/tools/get-unread-replies.ts`** — matches unread mail back to a
+  thread we started (same rule hartwich-os's own `sync-replies.ts` uses)
+  and skips anything that isn't a reply to us.
+- **`src/db/hartwich-os/write-store.ts`** (`recordInboundReply`,
+  `moveDealToLostStage`, `flagDealForReview`) — a reply is recorded as a
+  real activity/message and moves Contacted → Engaged, visible in
+  hartwich-os's existing timeline exactly like Phase 5's sends.
+- **`src/tools/notify-gavin.ts`** — the actual human-in-the-loop step for
+  PRICE/HOSTILE: an alert email, not a silent skip.
+- **`src/db/hartwich-os/write-store-stub.ts`** — a `NotImplementedWriteStore`
+  base class every fake/demo `HartwichWriteStore` now extends, overriding
+  only what it exercises, instead of hand-writing a stub for every method
+  each time the interface grows one (every phase so far has added at
+  least one) — a small refactor, not new behavior.
+
+`npm run demo:handle-replies` classifies a fixture reply and runs it all
+the way through — appointment intent detected, real booking link
+generated, sent in-thread, recorded — no credentials, no approval step.
+
 ## Running it
 
 ```bash
@@ -269,6 +334,7 @@ npm run demo:discover         # Phase 2 demo — full discovery/research/qualifi
 npm run demo:goal-status      # Phase 3 demo — goal/KPI/pace/forecast/bottleneck report against fixtures
 npm run demo:outreach         # Phase 4 demo — strategy -> generation -> draft against a fixture
 npm run demo:execute-outreach # Phase 5 demo — autonomous send, guard checks and all, against a fixture
+npm run demo:handle-replies   # Phase 6 demo — classify a reply, hand back a real booking link, send in-thread
 ```
 
 Both demos use real Groq/Anthropic calls only if their API keys are set,
@@ -280,9 +346,8 @@ repo's own** schema (`src/db/schema.ts`) to `AGENT_DATABASE_URL` — never
 
 ## What's next
 
-Per `SPEC.md` §55: Phase 6 — Conversation Intelligence and the Appointment
-Agent. This is what finally lets Phase 5's sends generate real inbound
-data (replies get classified — interested/objection/price/unsubscribe/
-etc. — instead of every reply being untouched), and is also what should
-turn the opt-out list from "manually maintained" into
-"auto-detected from an unsubscribe reply."
+Per `SPEC.md` §55: Phase 7 — the CRM Agent. Much of this is already true
+in practice (companies/contacts/deals/activities/messages already update
+automatically as Phases 2-6 run) — Phase 7's job is closing the remaining
+gaps so human CRM administration approaches zero for a normal sales
+interaction, per `SPEC.md` §32.

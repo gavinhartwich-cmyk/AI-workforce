@@ -23,6 +23,16 @@ import { AUTONOMY } from "../runtime/autonomy-levels.js";
  * This rule only says an agent at this autonomy level is structurally
  * allowed to send at all; it is not the substantive safety check.
  *
+ * Phase 6 adds reply-handling tools at the same level: routine
+ * conversation handling is autonomous per SPEC.md §17/§29 (classify,
+ * reply, suppress on request, close a clear no). `notify_gavin` is the one
+ * exception worth calling out even though it's also AUTONOMOUS_ROUTINE —
+ * autonomy here means the AGENT may decide escalation is warranted and
+ * send the alert without asking first, not that the escalation itself is
+ * silent; the alert email IS the human-in-the-loop step for PRICE/HOSTILE
+ * replies (src/outreach/reply-routing.ts never lets those get an
+ * autonomous reply).
+ *
  * Later phases add rules here for pricing/offer changes, new channels,
  * etc. — see SPEC.md §18's `AuthorityPolicy` (maxVolume/maxBudget/
  * maxChangePercent) for the richer shape those will need; this is
@@ -33,4 +43,9 @@ export const DEFAULT_POLICY_RULES: PolicyRule[] = [
   { tool: "create_email_draft", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
   { tool: "send_email", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
   { tool: "record_outbound_email", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
+  { tool: "mark_email_read", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
+  { tool: "record_inbound_reply", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
+  { tool: "close_deal_lost", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
+  { tool: "flag_deal_for_review", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
+  { tool: "notify_gavin", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
 ];

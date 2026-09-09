@@ -6,7 +6,7 @@ const InputSchema = z.object({
   companyId: z.string().uuid(),
   contactId: z.string().uuid().nullable(),
   dealId: z.string().uuid(),
-  kind: z.enum(["cold_outreach", "follow_up"]),
+  kind: z.enum(["cold_outreach", "follow_up", "reply"]),
   accountIndex: z.union([z.literal(0), z.literal(1), z.literal(2)]),
   to: z.string().email(),
   fromAddress: z.string().email(),
