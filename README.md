@@ -109,6 +109,47 @@ Discovery → Research → Qualification, wired to real hartwich-os data
 real credentials (see `.env.example`) to run it against live Google Places
 and a real hartwich-os database.
 
+## Phase 3 status — done
+
+Goal Engine, KPI Engine, Forecasting, Bottleneck Detection (`SPEC.md` §55
+Phase 3) — the system can now answer "are we on track to hit our sales
+goal?" End to end in `src/goals/goal-status-report.ts`:
+
+- **`src/goals/goal-store.ts`** — `sales_goals` CRUD (this repo's own
+  database). A goal is `{ metric, target, periodStart, periodEnd,
+  priority, constraints, status }` per `SPEC.md` §49.
+- **`src/goals/kpi-engine.ts`** — deterministic, code-only per-metric
+  computation (`SPEC.md` §10: "don't let an LLM do arithmetic plain code
+  handles"), reading real hartwich-os data
+  (`src/db/hartwich-os/funnel-reader.ts`) and this repo's own agent health
+  (`src/db/agent-health-reader.ts`, computed live from `agent_runs` —
+  Phase 1/2 already populate it). Metrics with no data source yet
+  (`positive_conversations`, `outreach_sent`, ...) honestly return `value:
+  null, confidence: 0` rather than a fabricated zero — they land with
+  Phase 4-6.
+- **`src/goals/pace-forecast.ts`** — pure functions: `computePace`
+  (expected-by-now, variance, required future pace, `SPEC.md` §12) and
+  `computeForecast` (projected final value, a documented probability
+  heuristic, and a `NOT_STARTED/ON_TRACK/AT_RISK/BEHIND/CRITICAL/ACHIEVED`
+  status, `SPEC.md` §11).
+- **`src/goals/bottleneck-engine.ts`** — ranks every funnel-stage
+  conversion by *impact on the final stage* if it alone matched its
+  (configurable, `SPEC.md` §9) target rate, holding every other stage's
+  actual performance fixed — falling back to a stage's own target rate
+  when its actual rate is undefined (nothing has reached it yet), so a
+  single data gap doesn't kill every downstream impact estimate.
+  `SPEC.md` §14: diagnose before increasing every agent's workload.
+- **`src/goals/manager-decision-store.ts`** — `manager_decisions`
+  (`SPEC.md` §36's `ManagerDecision` shape). Phase 3 writes one
+  diagnosis-only record per report (`selectedAction: "none"` — there's no
+  autonomous decision-maker to choose and execute an intervention until
+  Phase 9's Sales Manager exists). The table's shape is final now so
+  Phase 9 only changes how it's used, not its structure.
+
+`npm run demo:goal-status` prints a full status report — goal, current
+KPI, pace, forecast, bottleneck diagnosis — against fixtures, no database
+needed.
+
 ## Running it
 
 ```bash
@@ -119,6 +160,7 @@ npm run typecheck
 npm test                      # no network, no credentials needed
 npm run demo:company-lookup   # Phase 1 demo — runs end-to-end against a fixture
 npm run demo:discover         # Phase 2 demo — full discovery/research/qualification pipeline against fixtures
+npm run demo:goal-status      # Phase 3 demo — goal/KPI/pace/forecast/bottleneck report against fixtures
 ```
 
 Both demos use real Groq/Anthropic calls only if their API keys are set,
@@ -130,7 +172,8 @@ repo's own** schema (`src/db/schema.ts`) to `AGENT_DATABASE_URL` — never
 
 ## What's next
 
-Per `SPEC.md` §55: Phase 3 — Goal Engine, KPI Engine, Forecasting,
-Bottleneck Detection, Workforce Capacity, Manager Decision System. Should
-land before any outreach agent, and should leave the system able to
-answer "are we on track to hit our sales goal?"
+Per `SPEC.md` §55: Phase 4 — Outreach Strategy, Outreach Generation, an
+approved-messaging system, and experiments. Still no sending — that's
+Phase 5, which is also where "Workforce Capacity" (agent queue depth,
+concurrency limits) becomes meaningful; there's no task queue for it to
+describe until agents run concurrently against real volume.

@@ -72,6 +72,7 @@ export const deals = pgTable("deals", {
   id: uuid("id").defaultRandom().primaryKey(),
   companyId: uuid("company_id").notNull(),
   stageId: uuid("stage_id").notNull(),
+  valueEstimate: numeric("value_estimate", { precision: 12, scale: 2 }),
   priority: integer("priority").notNull().default(0),
   stageEnteredAt: timestamp("stage_entered_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

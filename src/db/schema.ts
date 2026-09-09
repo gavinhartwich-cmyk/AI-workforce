@@ -10,17 +10,27 @@
  * at hartwich-os's Postgres via HARTWICH_DATABASE_URL — see
  * src/db/hartwich-os/schema.ts for that narrow, explicitly-a-mirror subset.
  *
- * Tables here correspond to spec §38's `agents`/`agent_*` family. Phase 1
- * only needs `agent_runs` (the audit log — spec §26/§37) and
- * `agent_permissions` (policy rules — spec §32, loaded into
- * DefaultPolicyEngine at startup rather than hardcoded). The rest of §38's
- * list (agent_goals, agent_tasks, agent_memory, agent_metrics, sales_goals,
- * sales_kpis, ...) is added in the phases that actually use them (Phase 3+)
- * rather than speculatively now.
+ * Tables here correspond to spec §38/§48's `agent_*`/`sales_*`/`manager_*`
+ * family. Phase 1 added `agent_runs` (the audit log) and
+ * `agent_permissions` (policy rules). Phase 3 (SPEC.md §55) adds the
+ * Goal/KPI/Forecast/Manager-Decision tables below. Still not here:
+ * `agent_goals`, `agent_tasks`, `agent_memory`, `agent_metrics`,
+ * `experiments*`, `approval_requests` — added in the phases that actually
+ * use them, not speculatively now.
  */
 
 import { relations } from "drizzle-orm";
-import { boolean, integer, jsonb, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  integer,
+  jsonb,
+  numeric,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 export const agentRunStatusEnum = pgEnum("agent_run_status", ["succeeded", "failed", "denied"]);
 
@@ -65,3 +75,133 @@ export const agentPermissions = pgTable("agent_permissions", {
 });
 
 export const agentRunsRelations = relations(agentRuns, () => ({}));
+
+// ---------------------------------------------------------------------------
+// sales_goals — first-class goal objects (SPEC.md §8, §49)
+// ---------------------------------------------------------------------------
+
+export const goalPriorityEnum = pgEnum("goal_priority", ["low", "normal", "high", "critical"]);
+
+export const goalStatusEnum = pgEnum("goal_status", [
+  "NOT_STARTED",
+  "ON_TRACK",
+  "AT_RISK",
+  "BEHIND",
+  "CRITICAL",
+  "ACHIEVED",
+  "FAILED",
+]);
+
+// GoalMetric values live in src/goals/types.ts as a TS union, not a pg
+// enum — new metrics (e.g. once Phase 4/5 add outreach data) shouldn't
+// need a migration to become goal-able, just a KPI-engine case.
+export const salesGoals = pgTable("sales_goals", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  metric: text("metric").notNull(),
+  target: numeric("target", { precision: 14, scale: 2 }).notNull(),
+  periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+  periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+  priority: goalPriorityEnum("priority").notNull().default("normal"),
+  constraints: jsonb("constraints").$type<{
+    maxDailyOutreach?: number;
+    maxBudget?: number;
+    maxHumanHours?: number;
+    allowedChannels?: string[];
+  }>(),
+  status: goalStatusEnum("status").notNull().default("NOT_STARTED"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// sales_kpi_snapshots — one row per KPI Engine computation (SPEC.md §10).
+// A time series, not just a current value, so the Pace/Forecast engine has
+// real velocity history to work from instead of only a straight-line
+// average since the goal started.
+// ---------------------------------------------------------------------------
+
+export const salesKpiSnapshots = pgTable("sales_kpi_snapshots", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  goalId: uuid("goal_id")
+    .notNull()
+    .references(() => salesGoals.id, { onDelete: "cascade" }),
+  metric: text("metric").notNull(),
+  value: numeric("value", { precision: 14, scale: 2 }),
+  // 0-1 — how much this value should be trusted (SPEC.md §9's "mark
+  // estimates as estimates"). Null `value` + confidence 0 means "no data
+  // source wired up for this metric yet," not "the metric is zero."
+  confidence: numeric("confidence", { precision: 3, scale: 2 }).notNull(),
+  dataSource: text("data_source").notNull(),
+  note: text("note"),
+  asOf: timestamp("as_of", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// sales_forecasts — one row per Pace/Forecast Engine computation
+// (SPEC.md §11-12).
+// ---------------------------------------------------------------------------
+
+export const salesForecasts = pgTable("sales_forecasts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  goalId: uuid("goal_id")
+    .notNull()
+    .references(() => salesGoals.id, { onDelete: "cascade" }),
+  asOf: timestamp("as_of", { withTimezone: true }).notNull(),
+  currentValue: numeric("current_value", { precision: 14, scale: 2 }).notNull(),
+  expectedByNow: numeric("expected_by_now", { precision: 14, scale: 2 }).notNull(),
+  currentPace: numeric("current_pace", { precision: 14, scale: 4 }).notNull(),
+  requiredFuturePace: numeric("required_future_pace", { precision: 14, scale: 4 }).notNull(),
+  projectedFinal: numeric("projected_final", { precision: 14, scale: 2 }).notNull(),
+  // 0-100 — a documented heuristic (src/goals/pace-forecast.ts), not a
+  // calibrated statistical model yet (SPEC.md §9: replace estimates with
+  // real data as it accumulates).
+  probability: integer("probability").notNull(),
+  status: goalStatusEnum("status").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// manager_decisions — institutional memory (SPEC.md §36). Phase 3 writes a
+// diagnosis-only record per goal-status computation (bottleneck found,
+// selectedAction "none" — there's no autonomous decision-maker until
+// Phase 9's Sales Manager exists to actually choose and act on an
+// intervention). The shape is the full ManagerDecision interface from day
+// one so Phase 9 extends this table's usage, not its structure.
+// ---------------------------------------------------------------------------
+
+export const managerDecisions = pgTable("manager_decisions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  goalId: uuid("goal_id")
+    .notNull()
+    .references(() => salesGoals.id, { onDelete: "cascade" }),
+  observation: text("observation").notNull(),
+  diagnosis: text("diagnosis").notNull(),
+  options: jsonb("options")
+    .$type<{ action: string; expectedImpact: number; confidence: number; risk: number }[]>()
+    .notNull()
+    .default([]),
+  selectedAction: text("selected_action").notNull(),
+  reason: text("reason").notNull(),
+  expectedOutcome: text("expected_outcome").notNull(),
+  actualOutcome: text("actual_outcome"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const salesGoalsRelations = relations(salesGoals, ({ many }) => ({
+  kpiSnapshots: many(salesKpiSnapshots),
+  forecasts: many(salesForecasts),
+  decisions: many(managerDecisions),
+}));
+
+export const salesKpiSnapshotsRelations = relations(salesKpiSnapshots, ({ one }) => ({
+  goal: one(salesGoals, { fields: [salesKpiSnapshots.goalId], references: [salesGoals.id] }),
+}));
+
+export const salesForecastsRelations = relations(salesForecasts, ({ one }) => ({
+  goal: one(salesGoals, { fields: [salesForecasts.goalId], references: [salesGoals.id] }),
+}));
+
+export const managerDecisionsRelations = relations(managerDecisions, ({ one }) => ({
+  goal: one(salesGoals, { fields: [managerDecisions.goalId], references: [salesGoals.id] }),
+}));

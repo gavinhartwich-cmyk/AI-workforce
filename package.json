@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "demo:company-lookup": "tsx src/index.ts",
     "demo:discover": "tsx src/demo-discover.ts",
+    "demo:goal-status": "tsx src/demo-goal-status.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
   },
