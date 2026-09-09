@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "demo:company-lookup": "tsx src/index.ts",
+    "demo:discover": "tsx src/demo-discover.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
   },

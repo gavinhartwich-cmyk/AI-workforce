@@ -58,21 +58,56 @@ AgentDefinition → Context Builder → Model Router → LLM → Structured Outp
   failure or denial, is recorded (spec §53).
 - **`src/runtime/agent-runtime.ts`** — `AgentRuntime.run()`, the pipeline above.
 
-## Phase 1 status
+## Phase 1 status — done
 
 Per `SPEC.md` §55, Phase 1 is: agent runtime, tool registry, model
 abstraction, permissions, policy engine, audit system, structured output
-validation. **No autonomous outbound messaging.** That's what's in this
-repo today — `src/agents/company-review-agent.ts` is the proof-of-pipeline
-agent (input → reason → structured output → policy-checked tool call →
-audit), matching the spec's Phase 1 definition of done.
+validation. **No autonomous outbound messaging.** `src/agents/company-review-agent.ts`
+is the proof-of-pipeline agent (input → reason → structured output →
+policy-checked tool call → audit), matching the spec's Phase 1 definition
+of done.
 
 Known, deliberate Phase 1 limitation: the runtime is a single reasoning
 pass. A tool call an agent's output requests executes and gets audited,
-but its result isn't fed back for a further, better-informed answer —
-that "look something up, then reason again about what came back" loop is
-real agentic behavior later phases (Research, Qualification) will need,
-not something Phase 1 pretends to already have.
+but its result isn't fed back for a further, better-informed answer.
+Phase 2 doesn't need that loop either — see below — but a later phase
+eventually will.
+
+## Phase 2 status — done
+
+Discovery → Research → Qualification, wired to real hartwich-os data
+(`SPEC.md` §55 Phase 2):
+
+- **`src/agents/prospect-discovery-agent.ts`** — screens raw Google Places
+  results for obvious mismatches (fast lane). Search and dedupe themselves
+  are deterministic code, not model calls (`src/tools/search-google-places.ts`,
+  `find-duplicate-company.ts`) — SPEC.md §10's "don't use an LLM for what
+  code does reliably."
+- **`src/agents/research-agent.ts`** — turns Places data + fetched website
+  text (`src/tools/fetch-website-text.ts`) into structured business/contact/
+  evidence-based sales-signal intelligence (fast lane).
+- **`src/agents/qualification-agent.ts`** — scores six dimensions 0-100
+  with reasoning; it never computes a final number. `src/qualification/scoring.ts`
+  is the deterministic weighted formula (ICP fit 30% / Opportunity 25% /
+  Contactability 15% / Business Quality 15% / Timing 10% / Data Confidence
+  5%, per SPEC.md §25) that turns those into a score, tier (A+…D), and
+  status (qualified/needs_review/disqualified) — pure, unit-tested, and
+  never touched by the model.
+- **`src/pipelines/discover-research-qualify.ts`** — wires all of the
+  above together, plus the one mutating step: `persist_discovered_company`
+  (`src/tools/persist-discovered-company.ts` / `src/db/hartwich-os/write-store.ts`),
+  which mirrors hartwich-os's own `createDiscoveredCompany` field-for-field
+  (always writes the company row so a re-run's dedupe check skips it;
+  creates a contact only if one was found; creates a deal, into the
+  lowest-position pipeline stage, only when status is "qualified"). This
+  write is routine/autonomous per SPEC.md §17 — see
+  `src/policy/default-rules.ts` for the policy rule that allows it at
+  `AUTONOMOUS_ROUTINE` (no per-lead approval).
+
+`npm run demo:discover` runs the whole pipeline against fixtures — no
+`GOOGLE_PLACES_API_KEY` or `HARTWICH_DATABASE_URL` needed. Point both at
+real credentials (see `.env.example`) to run it against live Google Places
+and a real hartwich-os database.
 
 ## Running it
 
@@ -82,11 +117,12 @@ cp .env.example .env.local   # optional for the demo/tests — see below
 
 npm run typecheck
 npm test                      # no network, no credentials needed
-npm run demo:company-lookup   # runs end-to-end against a fixture; uses
-                               # real Groq/Anthropic calls only if their
-                               # API keys are set, otherwise falls back to
-                               # a canned FakeModelProvider response
+npm run demo:company-lookup   # Phase 1 demo — runs end-to-end against a fixture
+npm run demo:discover         # Phase 2 demo — full discovery/research/qualification pipeline against fixtures
 ```
+
+Both demos use real Groq/Anthropic calls only if their API keys are set,
+otherwise they fall back to canned `FakeModelProvider` responses.
 
 `npm run db:generate` / `npm run db:migrate` (Drizzle) apply **this
 repo's own** schema (`src/db/schema.ts`) to `AGENT_DATABASE_URL` — never
@@ -94,5 +130,7 @@ repo's own** schema (`src/db/schema.ts`) to `AGENT_DATABASE_URL` — never
 
 ## What's next
 
-Per `SPEC.md` §55: Phase 2 (Prospect Discovery / Research / Qualification,
-wired to real `hartwich-os` data) once Phase 1 is reviewed.
+Per `SPEC.md` §55: Phase 3 — Goal Engine, KPI Engine, Forecasting,
+Bottleneck Detection, Workforce Capacity, Manager Decision System. Should
+land before any outreach agent, and should leave the system able to
+answer "are we on track to hit our sales goal?"

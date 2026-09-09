@@ -1,14 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { z } from "zod";
-import type {
-  AgentDefinition,
-  AgentRunResult,
-  AuditSink,
-  ModelRouterLike,
-  PolicyEngine,
-  ToolContext,
-} from "./types.js";
+import type { AgentDefinition, AgentRunResult, AuditSink, ModelRouterLike, PolicyEngine } from "./types.js";
 import { ToolRegistry } from "./tool-registry.js";
+import { ToolExecutor } from "./tool-executor.js";
 
 /**
  * The one reusable execution pipeline (spec §35):
@@ -28,7 +22,11 @@ export class AgentRuntime {
       policy: PolicyEngine;
       audit: AuditSink;
     }
-  ) {}
+  ) {
+    this.executor = new ToolExecutor({ tools: deps.tools, policy: deps.policy });
+  }
+
+  private executor: ToolExecutor;
 
   async run<TInput, TOutput>(
     agent: AgentDefinition<TInput, TOutput>,
@@ -101,18 +99,15 @@ export class AgentRuntime {
             `Agent "${agent.id}" tried to call "${invocation.tool}", which isn't in its declared tool list.`
           );
         }
-        const tool = this.deps.tools.get(invocation.tool);
-        if (!tool) {
-          throw new Error(`Tool "${invocation.tool}" is not registered.`);
-        }
-
-        const decision = await this.deps.policy.check({
+        const result = await this.executor.invoke({
           agentId: agent.id,
           autonomyLevel: agent.autonomyLevel,
-          tool,
+          toolName: invocation.tool,
           toolInput: invocation.input,
+          ctx: { agentId: agent.id, runId },
         });
-        if (!decision.allowed) {
+
+        if (result.status === "denied") {
           await this.deps.audit.record({
             runId,
             agentId: agent.id,
@@ -124,21 +119,15 @@ export class AgentRuntime {
             output,
             toolCalls,
             status: "denied",
-            error: decision.reason,
+            error: result.reason,
           });
-          return { status: "denied", reason: decision.reason, runId };
+          return { status: "denied", reason: result.reason, runId };
+        }
+        if (result.status === "failed") {
+          throw new Error(result.error);
         }
 
-        const toolInputResult = tool.inputSchema.safeParse(invocation.input);
-        if (!toolInputResult.success) {
-          throw new Error(
-            `Tool "${tool.name}" input failed validation: ${toolInputResult.error.message}`
-          );
-        }
-
-        const ctx: ToolContext = { agentId: agent.id, runId };
-        const toolOutput = await tool.execute(toolInputResult.data, ctx);
-        toolCalls.push({ tool: tool.name, input: invocation.input, output: toolOutput });
+        toolCalls.push({ tool: invocation.tool, input: invocation.input, output: result.output });
       }
 
       // 6. Audit — every run, success or failure, leaves a record

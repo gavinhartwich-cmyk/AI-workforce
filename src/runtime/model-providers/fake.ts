@@ -14,7 +14,12 @@ export class FakeModelProvider implements ModelProvider {
     private opts: {
       model?: string;
       generateResponse?: string;
+      /** Used when `responsesBySchema` doesn't have an entry for the call's schemaName. */
       structuredResponse?: unknown;
+      /** Keyed by `schemaName` (== `${agent.id}_output`) — lets one provider
+       * serve a multi-agent pipeline test with a different canned response
+       * per agent, instead of one response for every call. */
+      responsesBySchema?: Record<string, unknown>;
     } = {}
   ) {}
 
@@ -33,9 +38,12 @@ export class FakeModelProvider implements ModelProvider {
     zodSchema: z.ZodType<T>;
     maxTokens?: number;
   }): Promise<StructuredResponse<T>> {
-    const result = input.zodSchema.safeParse(this.opts.structuredResponse);
+    const canned = this.opts.responsesBySchema?.[input.schemaName] ?? this.opts.structuredResponse;
+    const result = input.zodSchema.safeParse(canned);
     if (!result.success) {
-      throw new Error(`FakeModelProvider's canned response doesn't match the schema: ${result.error.message}`);
+      throw new Error(
+        `FakeModelProvider has no valid canned response for schema "${input.schemaName}": ${result.error.message}`
+      );
     }
     return {
       parsed: result.data,

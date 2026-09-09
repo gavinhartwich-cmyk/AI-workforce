@@ -1,36 +1,93 @@
 /**
  * NOT a source of truth. This is a narrow, explicitly-a-mirror subset of
- * hartwich-os's real schema (hartwich-os/src/db/schema.ts), just the
- * columns Phase 1's example tool (src/tools/get-company.ts) reads.
+ * hartwich-os's real schema (hartwich-os/src/db/schema.ts) — just the
+ * tables/columns Phase 1-2's tools read or write
+ * (src/tools/get-company.ts, find-duplicate-company.ts,
+ * persist-discovered-company.ts).
  *
- * hartwich-os owns this table — its migrations create/alter it, not this
- * repo's. If hartwich-os's `companies` table changes shape, this file needs
- * a matching update; it is never used to generate or push a migration
+ * hartwich-os owns these tables — its migrations create/alter them, not
+ * this repo's. If hartwich-os's schema changes shape, this file needs a
+ * matching update; it is never used to generate or push a migration
  * against hartwich-os's database (see drizzle.config.ts — that config only
  * points at this repo's own database).
- *
- * Kept read-only on purpose for Phase 1: no agent yet has a reason to
- * write into hartwich-os's CRM tables, and the spec is explicit that no
- * autonomous outbound messaging happens in this phase.
  */
 
-import { integer, numeric, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, numeric, pgEnum, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { relations } from "drizzle-orm";
 
 export const companySourceEnum = pgEnum("company_source", ["google_places", "apollo", "manual"]);
 export const companyStatusEnum = pgEnum("company_status", ["needs_review", "qualified", "disqualified"]);
+export const contactTierEnum = pgEnum("contact_tier", ["A", "B", "C"]);
+
+export const pipelineStages = pgTable("pipeline_stages", {
+  id: uuid("id").primaryKey(),
+  name: text("name").notNull(),
+  position: integer("position").notNull(),
+  isWon: boolean("is_won").notNull(),
+  isLost: boolean("is_lost").notNull(),
+});
 
 export const companies = pgTable("companies", {
-  id: uuid("id").primaryKey(),
+  id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
   website: text("website"),
   phone: text("phone"),
+  addressLine: text("address_line"),
   city: text("city"),
   state: text("state"),
+  postalCode: text("postal_code"),
   source: companySourceEnum("source").notNull(),
+  sourceRefId: text("source_ref_id"),
   googleReviewCount: integer("google_review_count"),
   googleRating: numeric("google_rating", { precision: 3, scale: 2 }),
+  isOwnerOperated: boolean("is_owner_operated"),
+  isFranchise: boolean("is_franchise"),
+  contactTier: contactTierEnum("contact_tier"),
   qualificationScore: integer("qualification_score"),
   qualificationReasoning: text("qualification_reasoning"),
-  status: companyStatusEnum("status").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  websiteSummary: text("website_summary"),
+  servicesOffered: jsonb("services_offered").$type<string[]>(),
+  apparentSize: text("apparent_size"),
+  disqualifyReason: text("disqualify_reason"),
+  status: companyStatusEnum("status").notNull().default("needs_review"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const contacts = pgTable("contacts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  companyId: uuid("company_id").notNull(),
+  name: text("name"),
+  title: text("title"),
+  email: text("email"),
+  phone: text("phone"),
+  linkedinUrl: text("linkedin_url"),
+  isPrimary: boolean("is_primary").notNull().default(false),
+  source: companySourceEnum("source").notNull().default("manual"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const deals = pgTable("deals", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  companyId: uuid("company_id").notNull(),
+  stageId: uuid("stage_id").notNull(),
+  priority: integer("priority").notNull().default(0),
+  stageEnteredAt: timestamp("stage_entered_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const companiesRelations = relations(companies, ({ many }) => ({
+  contacts: many(contacts),
+  deals: many(deals),
+}));
+
+export const contactsRelations = relations(contacts, ({ one }) => ({
+  company: one(companies, { fields: [contacts.companyId], references: [companies.id] }),
+}));
+
+export const dealsRelations = relations(deals, ({ one }) => ({
+  company: one(companies, { fields: [deals.companyId], references: [companies.id] }),
+  stage: one(pipelineStages, { fields: [deals.stageId], references: [pipelineStages.id] }),
+}));
