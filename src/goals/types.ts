@@ -10,6 +10,7 @@ export type GoalMetric =
   | "new_clients"
   | "revenue"
   | "mrr"
+  | "close_rate" // Phase 8, SPEC.md §33 "business metrics ... close rate"
   // Pipeline (SPEC.md §8 "Sales outcomes")
   | "qualified_opportunities"
   | "meetings_booked"
@@ -19,10 +20,16 @@ export type GoalMetric =
   | "qualified_prospects"
   | "outreach_sent"
   | "follow_ups_completed"
-  // Efficiency (SPEC.md §8 "Efficiency")
+  // Efficiency (SPEC.md §8 "Efficiency"; §33 adds prospects-per-client and human intervention)
   | "agent_success_rate"
   | "revenue_per_prospect"
-  | "human_hours_per_client";
+  | "prospects_per_client"
+  | "human_escalations"
+  | "human_hours_per_client"
+  // Quality (Phase 8, SPEC.md §33 "quality: response quality, qualification
+  // accuracy, data confidence, opt-outs, errors")
+  | "opt_outs"
+  | "agent_error_rate";
 
 export type GoalPriority = "low" | "normal" | "high" | "critical";
 

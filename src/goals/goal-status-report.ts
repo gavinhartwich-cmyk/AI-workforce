@@ -4,6 +4,7 @@ import type { ForecastStore } from "./forecast-store.js";
 import type { ManagerDecisionStore } from "./manager-decision-store.js";
 import type { FunnelReader } from "../db/hartwich-os/funnel-reader.js";
 import type { AgentHealthReader } from "../db/agent-health-reader.js";
+import type { AnalyticsReader } from "../db/analytics-reader.js";
 import { computeKpiValue } from "./kpi-engine.js";
 import { computePace, computeForecast, type ForecastThresholds } from "./pace-forecast.js";
 import { getFunnelStageVolumes, DEFAULT_TARGET_CONVERSION_RATES } from "./funnel-stages.js";
@@ -29,6 +30,7 @@ export async function getGoalStatusReport(
     goals: GoalStore;
     funnel: FunnelReader;
     agentHealth: AgentHealthReader;
+    analytics: AnalyticsReader;
     kpiSnapshots: KpiSnapshotStore;
     forecasts: ForecastStore;
     decisions: ManagerDecisionStore;
@@ -42,7 +44,11 @@ export async function getGoalStatusReport(
 
   const period = { start: goal.periodStart, end: goal.periodEnd };
 
-  const kpi = await computeKpiValue(goal.metric, period, { funnel: deps.funnel, agentHealth: deps.agentHealth });
+  const kpi = await computeKpiValue(goal.metric, period, {
+    funnel: deps.funnel,
+    agentHealth: deps.agentHealth,
+    analytics: deps.analytics,
+  });
   await deps.kpiSnapshots.record(goal.id, goal.metric, kpi, asOf);
 
   const currentValue = kpi.value ?? 0;

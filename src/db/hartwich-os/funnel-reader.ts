@@ -1,6 +1,6 @@
 import { and, between, eq, sql } from "drizzle-orm";
 import { getHartwichOsDb } from "./client.js";
-import { companies, deals, pipelineStages } from "./schema.js";
+import { auditLog, companies, deals, pipelineStages } from "./schema.js";
 import type { Period } from "../../goals/types.js";
 
 /**
@@ -23,6 +23,17 @@ export interface FunnelReader {
   countDealsByStageName(stageName: string, period: Period): Promise<number>;
   countDealsWon(period: Period): Promise<number>;
   sumWonDealValue(period: Period): Promise<number>;
+  /** For close_rate (Phase 8, SPEC.md §33) — mirrors countDealsWon but for pipeline_stages.is_lost. */
+  countDealsLost(period: Period): Promise<number>;
+  /**
+   * Counts hartwich-os audit_log rows by exact `action` string (Phase 7
+   * wrote every consequential write there). Phase 8 reuses it rather than
+   * adding new bookkeeping: `email.cold_outreach_sent`/`email.follow_up_sent`
+   * for outreach_sent/follow_ups_completed, `task.created` for
+   * human_escalations — every one of these is already recorded for
+   * Phase 7's own reasons.
+   */
+  countAuditAction(action: string, period: Period): Promise<number>;
 }
 
 export class PostgresFunnelReader implements FunnelReader {
@@ -84,5 +95,24 @@ export class PostgresFunnelReader implements FunnelReader {
       .innerJoin(pipelineStages, eq(deals.stageId, pipelineStages.id))
       .where(and(eq(pipelineStages.isWon, true), between(deals.stageEnteredAt, period.start, period.end)));
     return row?.sum != null ? Number(row.sum) : 0;
+  }
+
+  async countDealsLost(period: Period): Promise<number> {
+    const db = getHartwichOsDb();
+    const [row] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(deals)
+      .innerJoin(pipelineStages, eq(deals.stageId, pipelineStages.id))
+      .where(and(eq(pipelineStages.isLost, true), between(deals.stageEnteredAt, period.start, period.end)));
+    return row?.count ?? 0;
+  }
+
+  async countAuditAction(action: string, period: Period): Promise<number> {
+    const db = getHartwichOsDb();
+    const [row] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(auditLog)
+      .where(and(eq(auditLog.action, action), between(auditLog.createdAt, period.start, period.end)));
+    return row?.count ?? 0;
   }
 }

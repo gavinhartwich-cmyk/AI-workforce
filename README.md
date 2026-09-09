@@ -375,6 +375,59 @@ existing INTERESTED+appointment-intent autonomous reply (Phase 6), and a
 new PRICE reply that gets escalated — flagged for review, a company note
 appended, and a task created (Phase 7) — instead of an autonomous reply.
 
+## Phase 8 status — done
+
+The Sales Analyst (`SPEC.md` §55 Phase 8, §33). Phase 3 already built the
+"is THIS goal on track" machinery (KPI Engine, Pace, Forecast, Bottleneck
+Detection); Phase 8 is a second, wider lens — SPEC.md §33's four
+categories (funnel, business, efficiency, quality) for the whole business
+over a period, not one goal at a time — built entirely out of that same
+KPI Engine, not a parallel measurement system.
+
+- **`src/goals/kpi-engine.ts`** — three metrics that were an honest
+  `value: null, confidence: 0` since Phase 3 (there was nothing to read
+  yet) are wired up now that Phase 6/7 actually produce the data:
+  `outreach_sent`/`follow_ups_completed` read Phase 7's own `audit_log`
+  rows (`email.cold_outreach_sent`/`email.follow_up_sent` — already
+  written for Phase 7's own reasons, reused rather than duplicated), and
+  `positive_conversations` reads this repo's own `agent_runs` for
+  Conversation Intelligence classifications of `INTERESTED` (confidence
+  0.8, not 1 — it's a model's classification, not a verified label).
+  `human_hours_per_client` stays a deliberate null — nothing times a
+  human's minutes, and estimating it from agent activity would be a
+  fabricated number wearing a KPI's clothes.
+- **Five new metrics** for SPEC.md §33's business/efficiency/quality
+  categories, all deterministic: `close_rate` (won ÷ (won + lost)),
+  `prospects_per_client`, `human_escalations` (Phase 7's
+  `task.created` audit rows — the concrete "human intervention" signal,
+  not an estimate), `opt_outs` (this repo's own `suppressed_contacts`),
+  and `agent_error_rate` (1 − `agent_success_rate`).
+- **`src/db/hartwich-os/funnel-reader.ts`** — `countDealsLost` (mirrors
+  the existing `countDealsWon`) and a generic `countAuditAction(action,
+  period)` that both new outreach/escalation metrics above read from.
+- **`src/db/analytics-reader.ts`** (new) — read-only queries over this
+  repo's own database for the two metrics that live there
+  (`agent_runs`, `suppressed_contacts`), kept separate from
+  `AgentHealthReader` (a narrower, genuinely-just-agent-health concern)
+  rather than overloading it.
+- **`src/goals/sales-analyst-report.ts`** — `getSalesAnalystReport(period,
+  deps)` groups all of the above, plus Phase 3's existing bottleneck
+  diagnosis, into one report shaped like SPEC.md §33. Two things it
+  names are deliberately absent rather than faked: **response quality**
+  has no code-checkable definition (a judgment call about tone/relevance
+  — a real LLM-as-judge agent for a later phase, not a KPI Engine case),
+  and **qualification accuracy** needs a ground-truth label (did a
+  qualified lead convert, would a disqualified one never have) that
+  nothing in hartwich-os captures yet. **Data confidence** instead gets a
+  real, computable definition: the mean confidence across every KPI
+  value in the report itself — how much of *this report* should be
+  trusted, not a property of hartwich-os's records.
+
+`npm run demo:sales-analyst` runs the whole report against fixtures
+carrying the funnel forward from where `demo:goal-status`'s story left
+off — outreach sent, some replies, a couple of closed deals, one
+escalation — no credentials needed.
+
 ## Running it
 
 ```bash
@@ -389,6 +442,7 @@ npm run demo:goal-status      # Phase 3 demo — goal/KPI/pace/forecast/bottlene
 npm run demo:outreach         # Phase 4 demo — strategy -> generation -> draft against a fixture
 npm run demo:execute-outreach # Phase 5 demo — autonomous send, guard checks and all, against a fixture
 npm run demo:handle-replies   # Phase 6/7 demo — classify replies, autonomous reply + escalation with CRM note/task
+npm run demo:sales-analyst    # Phase 8 demo — funnel/business/efficiency/quality report for a period, against fixtures
 ```
 
 Both demos use real Groq/Anthropic calls only if their API keys are set,
@@ -400,4 +454,5 @@ repo's own** schema (`src/db/schema.ts`) to `AGENT_DATABASE_URL` — never
 
 ## What's next
 
-Per `SPEC.md` §55: Phase 8 — the Sales Analyst.
+Per `SPEC.md` §55: Phase 9 — the Sales Manager, "the operational brain of
+the sales workforce" (`SPEC.md` §7).

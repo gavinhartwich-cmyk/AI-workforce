@@ -15,6 +15,7 @@ import type { ForecastStore } from "./goals/forecast-store.js";
 import type { ManagerDecisionStore } from "./goals/manager-decision-store.js";
 import type { FunnelReader } from "./db/hartwich-os/funnel-reader.js";
 import type { AgentHealthReader } from "./db/agent-health-reader.js";
+import type { AnalyticsReader } from "./db/analytics-reader.js";
 import type { ManagerDecision, SalesGoal } from "./goals/types.js";
 import { getGoalStatusReport } from "./goals/goal-status-report.js";
 
@@ -72,11 +73,26 @@ class FixtureFunnelReader implements FunnelReader {
   async sumWonDealValue() {
     return 0;
   }
+  async countDealsLost() {
+    return 0;
+  }
+  async countAuditAction() {
+    return 0;
+  }
 }
 
 class FixtureAgentHealthReader implements AgentHealthReader {
   async getSuccessRate() {
     return { total: 42, succeeded: 40 };
+  }
+}
+
+class FixtureAnalyticsReader implements AnalyticsReader {
+  async countPositiveConversations() {
+    return 0;
+  }
+  async countOptOuts() {
+    return 0;
   }
 }
 
@@ -109,6 +125,7 @@ async function main() {
       goals: new FixedGoalStore(),
       funnel: new FixtureFunnelReader(),
       agentHealth: new FixtureAgentHealthReader(),
+      analytics: new FixtureAnalyticsReader(),
       kpiSnapshots: new PrintingKpiSnapshotStore(),
       forecasts: new PrintingForecastStore(),
       decisions: new PrintingManagerDecisionStore(),

@@ -6,6 +6,7 @@ import type { ForecastStore } from "../src/goals/forecast-store.js";
 import type { ManagerDecisionStore } from "../src/goals/manager-decision-store.js";
 import type { FunnelReader } from "../src/db/hartwich-os/funnel-reader.js";
 import type { AgentHealthReader } from "../src/db/agent-health-reader.js";
+import type { AnalyticsReader } from "../src/db/analytics-reader.js";
 import type { SalesGoal, GoalStatus, ManagerDecision } from "../src/goals/types.js";
 
 const PERIOD_START = new Date("2026-09-01T00:00:00Z");
@@ -52,11 +53,26 @@ class FakeFunnelReader implements FunnelReader {
   async sumWonDealValue() {
     return this.counts.wonValue;
   }
+  async countDealsLost() {
+    return 0;
+  }
+  async countAuditAction() {
+    return 0;
+  }
 }
 
 class FakeAgentHealthReader implements AgentHealthReader {
   async getSuccessRate() {
     return { total: 10, succeeded: 9 };
+  }
+}
+
+class FakeAnalyticsReader implements AnalyticsReader {
+  async countPositiveConversations() {
+    return 0;
+  }
+  async countOptOuts() {
+    return 0;
   }
 }
 
@@ -117,6 +133,7 @@ describe("getGoalStatusReport", () => {
         // outreach agent exists to move a deal past "New Lead."
         funnel: new FakeFunnelReader({ prospects: 100, qualified: 50, won: 0, wonValue: 0 }),
         agentHealth: new FakeAgentHealthReader(),
+        analytics: new FakeAnalyticsReader(),
         kpiSnapshots,
         forecasts,
         decisions,
@@ -146,6 +163,7 @@ describe("getGoalStatusReport", () => {
       goals,
       funnel: new FakeFunnelReader({ prospects: 100, qualified: 50, won: 2, wonValue: 5000 }),
       agentHealth: new FakeAgentHealthReader(),
+      analytics: new FakeAnalyticsReader(),
       kpiSnapshots: new RecordingKpiSnapshotStore(),
       forecasts: new RecordingForecastStore(),
       decisions: new RecordingManagerDecisionStore(),
@@ -161,6 +179,7 @@ describe("getGoalStatusReport", () => {
         goals,
         funnel: new FakeFunnelReader({ prospects: 0, qualified: 0, won: 0, wonValue: 0 }),
         agentHealth: new FakeAgentHealthReader(),
+        analytics: new FakeAnalyticsReader(),
         kpiSnapshots: new RecordingKpiSnapshotStore(),
         forecasts: new RecordingForecastStore(),
         decisions: new RecordingManagerDecisionStore(),
