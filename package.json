@@ -1,0 +1,35 @@
+{
+  "name": "hartwich-ai-workforce",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hartwich AI Sales Workforce — agent runtime and (later) Sales Manager, operating as a service/tool layer on top of Hartwich OS.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit false --outDir dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "demo:company-lookup": "tsx src/index.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.116.0",
+    "drizzle-orm": "^0.45.2",
+    "dotenv": "^17.4.2",
+    "groq-sdk": "^1.5.0",
+    "postgres": "^3.4.9",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9",
+    "@types/node": "^20",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9",
+    "tsx": "^4.23.9",
+    "typescript": "^5",
+    "typescript-eslint": "^8",
+    "vitest": "^3.2.4"
+  }
+}
