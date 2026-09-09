@@ -428,6 +428,76 @@ carrying the funnel forward from where `demo:goal-status`'s story left
 off — outreach sent, some replies, a couple of closed deals, one
 escalation — no credentials needed.
 
+## Phase 9 status — done
+
+The Sales Manager control loop (`SPEC.md` §55 Phase 9: "GOAL → PLAN →
+DELEGATE → EXECUTE → MEASURE → OPTIMIZE"). Every earlier phase built one
+piece of this loop; `src/manager/sales-manager.ts` is the first thing
+that actually runs it, per goal, per cycle — closing the TODO Phase 3
+itself left behind ("Phase 9's Sales Manager is what actually chooses
+and executes an intervention").
+
+- **PLAN** — `SalesManager.runCycle` calls `getGoalStatusReport` (Phase 3)
+  for the diagnosis, then `src/manager/intervention-generator.ts`
+  (`SPEC.md` §14 steps 2-5) proposes at most **one** real candidate
+  action — not a menu of hypothetical options with invented numbers.
+  Its `expectedImpact` reuses `detectBottleneck`'s own
+  `impactOnFinalStage` directly. `src/manager/work-intensity.ts` maps
+  the goal's forecast status onto `SPEC.md` §15's NORMAL/BEHIND/
+  AGGRESSIVE/CRITICAL ladder — how big an ask the manager makes scales
+  with how far behind the goal is (20%/50%/100% more discovery volume).
+- **DELEGATE/EXECUTE** — `src/manager/authority-policy.ts` implements
+  `SPEC.md` §18's `AuthorityPolicy` as a small, configurable table (data,
+  not code, same philosophy as `src/policy/default-rules.ts`). When the
+  proposed action is in-authority, the manager actually does it: triggers
+  more Prospect Discovery volume (`src/config/icp-targets.ts` — the same
+  hardcoded HVAC ICP the rest of the system uses) for an upstream funnel
+  gap, or creates a controlled experiment (`ExperimentStore` — real
+  infrastructure from an earlier phase that had no caller until now) for
+  a downstream conversion gap, using one fixed, pre-approved copywriting
+  variation rather than LLM-invented messaging. A repeat cycle against
+  the same stage never stacks a second experiment on top of one still
+  gathering samples (`SPEC.md` §34) — it escalates instead.
+- **Escalation** — when the needed change exceeds the manager's own
+  authority (e.g. the fix that would actually help needs +100% volume,
+  but the autonomous cap is +20%), it escalates instead of overstepping
+  or silently doing nothing, using `SPEC.md` §37's exact format
+  (GOAL/CURRENT FORECAST/ISSUE/RECOMMENDATION/EXPECTED IMPACT/RISK/WHY
+  APPROVAL IS REQUIRED) via Phase 7's existing `notify_gavin` and
+  `create_escalation_task` tools — no new escalation mechanism invented.
+- **MEASURE** — the KPI snapshot/forecast recording `getGoalStatusReport`
+  already did, plus (new in Phase 9) a real `manager_decisions` row per
+  cycle with actual `options`/`selectedAction`/`reason`/`expectedOutcome`
+  — the table's shape never changed since Phase 3 (`db/schema.ts`'s own
+  comment said this table was built "so Phase 9 extends this table's
+  usage, not its structure"), only who writes to it and what they write.
+  `getGoalStatusReport` itself no longer records a decision — one clear
+  owner of "what should we do about it," not two.
+- **OPTIMIZE** — `runAll()` re-runs the loop for every active goal;
+  calling it on a recurring schedule is deployment-level wiring, same as
+  every other pipeline in this repo (none of them own their own cron
+  either).
+
+Deliberately LLM-free, like every engine it's built from (KPI Engine,
+Bottleneck Engine, Pace/Forecast) — there's nothing left for a model to
+classify here: the diagnosis is already real numbers, and choosing the
+best of at most one in-authority option is arithmetic, not judgment.
+
+**Deliberately out of scope:** measuring which experiment variant is
+actually winning and auto-stopping a failed one (`SPEC.md` §17's "stop
+failed experiments") — that needs real per-variant outcome data this
+system doesn't attribute yet, an honest gap rather than a fabricated
+conclusion from too small a sample (`SPEC.md` §34). A full closed-loop
+`actualOutcome` backfill (`SPEC.md` §35's Learning Loop) is similarly
+left for later — this phase decides and records, it doesn't yet compare
+a past decision's prediction to what really happened.
+
+`npm run demo:sales-manager` runs two goals through one cycle: one
+BEHIND goal gets an autonomous 20%-bigger discovery run (within
+authority), and one CRITICAL goal — where the fix that would actually
+help needs a 100% increase — gets escalated to Gavin in `SPEC.md` §37's
+exact format instead. No credentials needed.
+
 ## Running it
 
 ```bash
@@ -443,6 +513,7 @@ npm run demo:outreach         # Phase 4 demo — strategy -> generation -> draft
 npm run demo:execute-outreach # Phase 5 demo — autonomous send, guard checks and all, against a fixture
 npm run demo:handle-replies   # Phase 6/7 demo — classify replies, autonomous reply + escalation with CRM note/task
 npm run demo:sales-analyst    # Phase 8 demo — funnel/business/efficiency/quality report for a period, against fixtures
+npm run demo:sales-manager    # Phase 9 demo — the manager plans, executes within authority, or escalates, per goal
 ```
 
 Both demos use real Groq/Anthropic calls only if their API keys are set,
@@ -454,5 +525,22 @@ repo's own** schema (`src/db/schema.ts`) to `AGENT_DATABASE_URL` — never
 
 ## What's next
 
-Per `SPEC.md` §55: Phase 9 — the Sales Manager, "the operational brain of
-the sales workforce" (`SPEC.md` §7).
+`SPEC.md` §55's numbered roadmap (Phase 0-9) is now built end to end —
+`SPEC.md` §56's "V1 Definition of Done" ("Gavin creates a sales goal →
+walks away → Sales Manager creates a plan → agents execute routine
+work...") describes what this repo now does, not what's left. What
+remains is deliberately-deferred, honestly-flagged work rather than a new
+phase number:
+
+- Real deployment wiring — a recurring schedule actually calling
+  `DiscoverResearchQualifyPipeline.run`, `SendFollowUpsPipeline.runAll`,
+  `HandleInboundRepliesPipeline.runAll`, and now `SalesManager.runAll` —
+  and pointing every store/reader at real `AGENT_DATABASE_URL`/
+  `HARTWICH_DATABASE_URL` credentials instead of a demo's fixtures.
+- Per-variant experiment outcome measurement and auto-stopping a failed
+  one (`SPEC.md` §17/§34) — `src/experiments/assignment.ts`'s
+  deterministic hash means no new assignment table is needed to measure
+  this later, but the measurement itself doesn't exist yet.
+- `SPEC.md` §35's Learning Loop — comparing a `ManagerDecision`'s
+  `expectedOutcome` against what actually happened, once enough cycles
+  have run to compare against.

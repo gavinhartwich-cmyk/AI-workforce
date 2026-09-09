@@ -2,21 +2,23 @@
  * Phase 3 demo — answers "are we on track to hit our sales goal?" end to
  * end with zero configuration (no AGENT_DATABASE_URL/HARTWICH_DATABASE_URL
  * needed): a fixed goal, fixture funnel numbers, and printing stand-ins for
- * the KPI-snapshot/forecast/manager-decision stores instead of a real
- * database. Point those three stores' real Postgres implementations
- * (src/goals/kpi-snapshot-store.ts, forecast-store.ts,
- * manager-decision-store.ts) at AGENT_DATABASE_URL for the real version.
+ * the KPI-snapshot/forecast stores instead of a real database. Point those
+ * two stores' real Postgres implementations (src/goals/kpi-snapshot-store.ts,
+ * forecast-store.ts) at AGENT_DATABASE_URL for the real version.
+ *
+ * This function only diagnoses — since Phase 9, deciding what to DO about
+ * it (and recording that decision) is src/manager/sales-manager.ts's job;
+ * see `npm run demo:sales-manager` for that half.
  *
  * Run with: npm run demo:goal-status
  */
 import type { GoalStore } from "./goals/goal-store.js";
 import type { KpiSnapshotStore } from "./goals/kpi-snapshot-store.js";
 import type { ForecastStore } from "./goals/forecast-store.js";
-import type { ManagerDecisionStore } from "./goals/manager-decision-store.js";
 import type { FunnelReader } from "./db/hartwich-os/funnel-reader.js";
 import type { AgentHealthReader } from "./db/agent-health-reader.js";
 import type { AnalyticsReader } from "./db/analytics-reader.js";
-import type { ManagerDecision, SalesGoal } from "./goals/types.js";
+import type { SalesGoal } from "./goals/types.js";
 import { getGoalStatusReport } from "./goals/goal-status-report.js";
 
 const PERIOD_START = new Date("2026-09-01T00:00:00Z");
@@ -108,16 +110,6 @@ class PrintingForecastStore implements ForecastStore {
   }
 }
 
-class PrintingManagerDecisionStore implements ManagerDecisionStore {
-  async record(decision: ManagerDecision) {
-    console.log(`  Manager decision recorded: "${decision.selectedAction.slice(0, 60)}..."`);
-    return "demo-decision";
-  }
-  async list() {
-    return [];
-  }
-}
-
 async function main() {
   const report = await getGoalStatusReport(
     GOAL.id,
@@ -128,7 +120,6 @@ async function main() {
       analytics: new FixtureAnalyticsReader(),
       kpiSnapshots: new PrintingKpiSnapshotStore(),
       forecasts: new PrintingForecastStore(),
-      decisions: new PrintingManagerDecisionStore(),
     },
     AS_OF
   );
@@ -141,7 +132,7 @@ async function main() {
   console.log(`\nBOTTLENECK`);
   console.log(`  ${report.bottleneck.observation}`);
   console.log(`  ${report.bottleneck.diagnosis}`);
-  console.log(`\nDecision record: ${report.decisionId}`);
+  console.log(`\n(See npm run demo:sales-manager for what the manager decides to do about this.)`);
 }
 
 main().catch((err) => {

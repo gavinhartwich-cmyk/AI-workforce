@@ -139,5 +139,4 @@ export type GoalStatusReport = {
   pace: PaceResult;
   forecast: ForecastResult;
   bottleneck: BottleneckDiagnosis;
-  decisionId: string | null;
 };

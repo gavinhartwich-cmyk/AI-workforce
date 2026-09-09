@@ -1,7 +1,6 @@
 import type { GoalStore } from "./goal-store.js";
 import type { KpiSnapshotStore } from "./kpi-snapshot-store.js";
 import type { ForecastStore } from "./forecast-store.js";
-import type { ManagerDecisionStore } from "./manager-decision-store.js";
 import type { FunnelReader } from "../db/hartwich-os/funnel-reader.js";
 import type { AgentHealthReader } from "../db/agent-health-reader.js";
 import type { AnalyticsReader } from "../db/analytics-reader.js";
@@ -16,13 +15,17 @@ import type { GoalStatusReport } from "./types.js";
  * hit our sales goal?" Pure orchestration — every actual computation
  * (KPI value, pace, forecast, bottleneck) is a deterministic function or
  * query elsewhere in src/goals/; this just calls them in order and
- * persists what each step produced (SPEC.md §36: institutional memory).
+ * persists the telemetry each step produced (KPI snapshot, forecast,
+ * goal status — SPEC.md §36: institutional memory).
  *
- * The manager_decisions row this writes is diagnosis-only — SPEC.md §36's
- * `ManagerDecision.options` is `[]` and `selectedAction` says outright that
- * there's no autonomous decision-maker yet. Phase 9's Sales Manager is
- * what actually chooses and executes an intervention; Phase 3 only has to
- * prove the diagnosis is right.
+ * Through Phase 8 this also wrote a diagnosis-only `manager_decisions` row
+ * with `options: []` and a `selectedAction` that said outright there was
+ * no autonomous decision-maker yet. Phase 9's `src/manager/sales-manager.ts`
+ * is that decision-maker now — it calls this function for the diagnosis,
+ * then does its own real `ManagerDecision.record(...)` with actual options,
+ * a selected action, and (when authority allows) something it actually
+ * executed. This function no longer decides or records a decision itself,
+ * only diagnoses — one clear owner of "what should we do about it."
  */
 export async function getGoalStatusReport(
   goalId: string,
@@ -33,7 +36,6 @@ export async function getGoalStatusReport(
     analytics: AnalyticsReader;
     kpiSnapshots: KpiSnapshotStore;
     forecasts: ForecastStore;
-    decisions: ManagerDecisionStore;
     targetConversionRates?: Record<string, number>;
     forecastThresholds?: ForecastThresholds;
   },
@@ -60,15 +62,5 @@ export async function getGoalStatusReport(
   const stages = await getFunnelStageVolumes(period, deps.funnel);
   const bottleneck = detectBottleneck(stages, deps.targetConversionRates ?? DEFAULT_TARGET_CONVERSION_RATES);
 
-  const decisionId = await deps.decisions.record({
-    goalId: goal.id,
-    observation: bottleneck.observation,
-    diagnosis: bottleneck.diagnosis,
-    options: [],
-    selectedAction: "none — Phase 3 has no autonomous decision-maker yet; this is a diagnostic record for a human, or the future Sales Manager (SPEC.md §55 Phase 9), to act on.",
-    reason: `Goal "${goal.metric}" is ${forecast.status} (current ${currentValue}, expected-by-now ${pace.expectedByNow}, projected final ${forecast.projectedFinal} vs. target ${goal.target}).`,
-    expectedOutcome: "n/a — no action was taken.",
-  });
-
-  return { goal, kpi, pace, forecast, bottleneck, decisionId };
+  return { goal, kpi, pace, forecast, bottleneck };
 }

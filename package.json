@@ -17,6 +17,7 @@
     "demo:execute-outreach": "tsx src/demo-execute-outreach.ts",
     "demo:handle-replies": "tsx src/demo-handle-replies.ts",
     "demo:sales-analyst": "tsx src/demo-sales-analyst.ts",
+    "demo:sales-manager": "tsx src/demo-sales-manager.ts",
     "outreach:control": "tsx src/cli/outreach-control.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"

@@ -3,11 +3,10 @@ import { getGoalStatusReport } from "../src/goals/goal-status-report.js";
 import type { GoalStore } from "../src/goals/goal-store.js";
 import type { KpiSnapshotStore } from "../src/goals/kpi-snapshot-store.js";
 import type { ForecastStore } from "../src/goals/forecast-store.js";
-import type { ManagerDecisionStore } from "../src/goals/manager-decision-store.js";
 import type { FunnelReader } from "../src/db/hartwich-os/funnel-reader.js";
 import type { AgentHealthReader } from "../src/db/agent-health-reader.js";
 import type { AnalyticsReader } from "../src/db/analytics-reader.js";
-import type { SalesGoal, GoalStatus, ManagerDecision } from "../src/goals/types.js";
+import type { SalesGoal, GoalStatus } from "../src/goals/types.js";
 
 const PERIOD_START = new Date("2026-09-01T00:00:00Z");
 const PERIOD_END = new Date("2026-10-01T00:00:00Z"); // 30 days
@@ -90,17 +89,6 @@ class RecordingForecastStore implements ForecastStore {
   }
 }
 
-class RecordingManagerDecisionStore implements ManagerDecisionStore {
-  records: ManagerDecision[] = [];
-  async record(decision: ManagerDecision): Promise<string> {
-    this.records.push(decision);
-    return `decision-${this.records.length}`;
-  }
-  async list(): Promise<ManagerDecision[]> {
-    return this.records;
-  }
-}
-
 function buildGoal(overrides: Partial<SalesGoal> = {}): SalesGoal {
   return {
     id: "goal-1",
@@ -123,7 +111,6 @@ describe("getGoalStatusReport", () => {
     const goals = new FakeGoalStore(goal);
     const kpiSnapshots = new RecordingKpiSnapshotStore();
     const forecasts = new RecordingForecastStore();
-    const decisions = new RecordingManagerDecisionStore();
 
     const report = await getGoalStatusReport(
       goal.id,
@@ -136,7 +123,6 @@ describe("getGoalStatusReport", () => {
         analytics: new FakeAnalyticsReader(),
         kpiSnapshots,
         forecasts,
-        decisions,
       },
       AS_OF
     );
@@ -146,12 +132,9 @@ describe("getGoalStatusReport", () => {
     expect(report.pace.varianceVsExpected).toBe(-5);
     expect(report.forecast.status).toBe("CRITICAL");
     expect(report.bottleneck.primaryBottleneck?.fromStage).toBe("qualified_prospects");
-    expect(report.decisionId).toBe("decision-1");
 
     expect(kpiSnapshots.records).toHaveLength(1);
     expect(forecasts.records).toHaveLength(1);
-    expect(decisions.records).toHaveLength(1);
-    expect(decisions.records[0].selectedAction).toMatch(/no autonomous decision-maker yet/);
     expect(goals.statusUpdates).toEqual([report.forecast.status]);
   });
 
@@ -166,7 +149,6 @@ describe("getGoalStatusReport", () => {
       analytics: new FakeAnalyticsReader(),
       kpiSnapshots: new RecordingKpiSnapshotStore(),
       forecasts: new RecordingForecastStore(),
-      decisions: new RecordingManagerDecisionStore(),
     });
 
     expect(report.forecast.status).toBe("ACHIEVED");
@@ -182,7 +164,6 @@ describe("getGoalStatusReport", () => {
         analytics: new FakeAnalyticsReader(),
         kpiSnapshots: new RecordingKpiSnapshotStore(),
         forecasts: new RecordingForecastStore(),
-        decisions: new RecordingManagerDecisionStore(),
       })
     ).rejects.toThrow(/No sales goal found/);
   });
