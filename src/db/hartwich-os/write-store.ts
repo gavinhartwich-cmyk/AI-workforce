@@ -1,6 +1,6 @@
-import { asc } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { getHartwichOsDb } from "./client.js";
-import { companies, contacts, deals, emailDrafts, pipelineStages } from "./schema.js";
+import { activities, companies, contacts, deals, emailDrafts, messages, pipelineStages } from "./schema.js";
 
 export type PersistDiscoveredCompanyInput = {
   place: {
@@ -49,6 +49,22 @@ export type CreateEmailDraftInput = {
 
 export type CreateEmailDraftResult = { draftId: string };
 
+export type RecordOutboundEmailInput = {
+  companyId: string;
+  contactId: string | null;
+  dealId: string;
+  kind: "cold_outreach" | "follow_up";
+  accountIndex: 0 | 1 | 2;
+  to: string;
+  fromAddress: string;
+  subject: string;
+  body: string;
+  providerMessageId: string;
+  threadId: string | null;
+};
+
+export type RecordOutboundEmailResult = { activityId: string; messageId: string };
+
 /**
  * The write path into hartwich-os's CRM — kept behind an interface
  * (rather than tools calling Drizzle directly) so tests can substitute an
@@ -58,6 +74,7 @@ export type CreateEmailDraftResult = { draftId: string };
 export interface HartwichWriteStore {
   persistDiscoveredCompany(input: PersistDiscoveredCompanyInput): Promise<PersistDiscoveredCompanyResult>;
   createEmailDraft(input: CreateEmailDraftInput): Promise<CreateEmailDraftResult>;
+  recordOutboundEmail(input: RecordOutboundEmailInput): Promise<RecordOutboundEmailResult>;
 }
 
 /**
@@ -164,5 +181,79 @@ export class PostgresHartwichWriteStore implements HartwichWriteStore {
       })
       .returning();
     return { draftId: draft.id };
+  }
+
+  /**
+   * Records an autonomous send exactly like a human-sent one — same
+   * activity/message shape hartwich-os's own sendApprovedDraft
+   * (src/lib/emails/send-approved-draft.ts) writes — and advances the
+   * deal the same way hartwich-os's applyPostSendDealUpdate does: a cold
+   * outreach send moves New Lead -> Contacted; a follow-up send increments
+   * followUpCount and clears the "needs a look" flag without changing
+   * stage. This IS the visibility mechanism for autonomous sending
+   * (Gavin, 2026-09-XX) — it shows up in hartwich-os's own company/deal
+   * timeline, not a separate log only this repo can see.
+   */
+  async recordOutboundEmail(input: RecordOutboundEmailInput): Promise<RecordOutboundEmailResult> {
+    const db = getHartwichOsDb();
+    const now = new Date();
+
+    return db.transaction(async (tx) => {
+      const [activity] = await tx
+        .insert(activities)
+        .values({
+          companyId: input.companyId,
+          contactId: input.contactId,
+          dealId: input.dealId,
+          type: "email",
+          direction: "outbound",
+          bodyText: input.body,
+          aiGenerated: true,
+          occurredAt: now,
+        })
+        .returning();
+
+      const [message] = await tx
+        .insert(messages)
+        .values({
+          activityId: activity.id,
+          provider: "gmail",
+          providerMessageId: input.providerMessageId,
+          threadId: input.threadId,
+          status: "delivered",
+          accountIndex: input.accountIndex,
+          toAddress: input.to,
+          fromAddress: input.fromAddress,
+          subject: input.subject,
+          body: input.body,
+          generatedByAi: true,
+        })
+        .returning();
+
+      if (input.kind === "cold_outreach") {
+        const [contactedStage] = await tx.select().from(pipelineStages).where(eq(pipelineStages.name, "Contacted")).limit(1);
+        await tx
+          .update(deals)
+          .set({
+            ...(contactedStage ? { stageId: contactedStage.id, stageEnteredAt: now } : {}),
+            lastOutboundEmailAt: now,
+            updatedAt: now,
+          })
+          .where(eq(deals.id, input.dealId));
+      } else {
+        await tx
+          .update(deals)
+          .set({
+            lastOutboundEmailAt: now,
+            followUpCount: sql`${deals.followUpCount} + 1`,
+            followUpFlaggedAt: null,
+            stageEnteredAt: now,
+            updatedAt: now,
+          })
+          .where(eq(deals.id, input.dealId));
+      }
+
+      return { activityId: activity.id, messageId: message.id };
+    });
   }
 }

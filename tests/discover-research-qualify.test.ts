@@ -68,6 +68,9 @@ class FakeWriteStore implements HartwichWriteStore {
   async createEmailDraft(): Promise<never> {
     throw new Error("not used by this test — see tests/strategize-and-draft-outreach.test.ts for Phase 4");
   }
+  async recordOutboundEmail(): Promise<never> {
+    throw new Error("not used by this test — see tests/execute-outreach.test.ts for Phase 5");
+  }
 }
 
 function buildPipeline(opts: { writeStore: HartwichWriteStore; existingCompanies?: { id: string; name: string; website: string | null }[] }) {

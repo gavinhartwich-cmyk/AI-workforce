@@ -22,6 +22,8 @@ export type OutreachTarget = {
   };
   contact: { id: string; name: string | null; title: string | null; email: string | null } | null;
   dealId: string | null;
+  /** Null if there's no deal yet; otherwise the pipeline stage's name — used to tell "never contacted" from "already contacted" (Phase 5). */
+  dealStageName: string | null;
 };
 
 /**
@@ -55,6 +57,7 @@ async function defaultLookup(companyId: string): Promise<OutreachTarget | null> 
   });
 
   const deal = await db.query.deals.findFirst({ where: (d, { eq }) => eq(d.companyId, companyId) });
+  const stage = deal ? await db.query.pipelineStages.findFirst({ where: (s, { eq }) => eq(s.id, deal.stageId) }) : null;
 
   return {
     company: {
@@ -74,5 +77,6 @@ async function defaultLookup(companyId: string): Promise<OutreachTarget | null> 
     },
     contact: contact ? { id: contact.id, name: contact.name, title: contact.title, email: contact.email } : null,
     dealId: deal?.id ?? null,
+    dealStageName: stage?.name ?? null,
   };
 }

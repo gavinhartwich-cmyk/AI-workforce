@@ -14,6 +14,8 @@
     "demo:discover": "tsx src/demo-discover.ts",
     "demo:goal-status": "tsx src/demo-goal-status.ts",
     "demo:outreach": "tsx src/demo-outreach.ts",
+    "demo:execute-outreach": "tsx src/demo-execute-outreach.ts",
+    "outreach:control": "tsx src/cli/outreach-control.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
   },
@@ -21,6 +23,7 @@
     "@anthropic-ai/sdk": "^0.116.0",
     "drizzle-orm": "^0.45.2",
     "dotenv": "^17.4.2",
+    "googleapis": "^176.0.0",
     "groq-sdk": "^1.5.0",
     "postgres": "^3.4.9",
     "zod": "^4.4.3"

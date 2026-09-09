@@ -243,3 +243,33 @@ export const experimentsRelations = relations(experiments, ({ many }) => ({
 export const experimentVariantsRelations = relations(experimentVariants, ({ one }) => ({
   experiment: one(experiments, { fields: [experimentVariants.experimentId], references: [experiments.id] }),
 }));
+
+// ---------------------------------------------------------------------------
+// suppressed_contacts — the opt-out list (SPEC.md §22, §32). Checked before
+// every send, no exceptions. Phase 5 has no reply-classification agent yet
+// (that's Phase 6's Conversation Intelligence) to detect "unsubscribe" in
+// an inbound reply, so entries land here from a manual/scripted add for
+// now — the enforcement is real even though the detection isn't automatic
+// yet. This is this repo's own table (not hartwich-os's) because
+// suppression must hold even if hartwich-os's own database is unreachable
+// for a moment — a stricter fail-closed default than "assume it's fine."
+// ---------------------------------------------------------------------------
+
+export const suppressedContacts = pgTable("suppressed_contacts", {
+  email: text("email").primaryKey(),
+  reason: text("reason").notNull(),
+  suppressedAt: timestamp("suppressed_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// outreach_control — a single-row kill switch (SPEC.md §57: "stop this
+// campaign"). Checked before every autonomous send; Gavin flips it without
+// touching a policy rule or redeploying anything.
+// ---------------------------------------------------------------------------
+
+export const outreachControl = pgTable("outreach_control", {
+  id: text("id").primaryKey().default("default"),
+  sendingPaused: boolean("sending_paused").notNull().default(false),
+  pausedReason: text("paused_reason"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

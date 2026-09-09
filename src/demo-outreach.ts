@@ -41,6 +41,7 @@ const FIXTURE_TARGET: OutreachTarget = {
   },
   contact: { id: "22222222-2222-4222-8222-222222222222", name: null, title: null, email: "info@example-hvac.test" },
   dealId: "33333333-3333-4333-8333-333333333333",
+  dealStageName: "New Lead",
 };
 
 class PrintingDraftStore implements HartwichWriteStore {
@@ -53,6 +54,9 @@ class PrintingDraftStore implements HartwichWriteStore {
     console.log(`    Subject: ${input.subject}`);
     console.log(`    Body: ${input.body}`);
     return { draftId: "demo-draft-1" };
+  }
+  async recordOutboundEmail(): Promise<never> {
+    throw new Error("not used by this demo — see demo-execute-outreach.ts for Phase 5");
   }
 }
 

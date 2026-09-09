@@ -190,6 +190,72 @@ an experiment engine (`SPEC.md` §55 Phase 4). **Still no sending** — Phase
 fixture, including an experiment directive actually reaching the Strategy
 Agent's prompt — no database needed.
 
+## Phase 5 status — done
+
+Outreach Execution and Follow-Up (`SPEC.md` §55 Phase 5) — **autonomous
+sending**, not a per-email approval queue. Per Gavin's direction
+(2026-09-XX): routine outbound sends automatically once it's properly
+handled, shows up where he already looks, and he can pause or suppress it
+without touching code.
+
+Phase 4's `create_email_draft`/pending-review path still exists (it's
+still valid, still tested) but the primary path for routine cold outreach
+and follow-ups is now this phase's autonomous execution.
+
+**"Properly handled"** (`src/outreach/send-guard.ts`, checked before every
+single send, in order):
+1. **Opt-out** (`opt-out-store.ts`, this repo's own `suppressed_contacts`
+   table) — permanent, no exceptions. There's no automatic
+   unsubscribe-detection yet (that needs Phase 6's Conversation
+   Intelligence to read a reply), but enforcement is real today for any
+   entry added via `npm run outreach:control -- suppress <email>`.
+2. **The kill switch** (`outreach-control-store.ts`) — a single paused/
+   running row Gavin flips directly, independent of any policy rule.
+3. **Sending window** (`send-window.ts`) — business hours only, not 3am.
+4. **Warm-up rate limit** (`warmup.ts`, ported from hartwich-os's own
+   proven ramp — 3/day ramping to 50/day, plus a 25-minute minimum
+   spacing) against `email_send_accounts`, the SAME state table
+   hartwich-os's own sending uses for these 3 rotating Gmail accounts
+   (`email-accounts-store.ts`) — one shared cap, not two systems
+   independently guessing at it.
+5. **Duplicate-contact prevention** is the deal's own pipeline stage: a
+   deal still in "New Lead" has never been sent to; once
+   `execute-outreach.ts` sends, it moves to "Contacted" and will never be
+   targeted again by that pipeline.
+
+**Visible** (`src/db/hartwich-os/write-store.ts`'s `recordOutboundEmail`):
+every autonomous send is written as a real `activities`/`messages` row —
+the exact shape hartwich-os's own human-sent-email flow uses — so it
+appears in hartwich-os's existing company/deal timeline. No separate
+outreach log to check.
+
+- **`src/integrations/gmail.ts`** — real Gmail API sending via the same
+  3-rotating-account OAuth setup as hartwich-os's own
+  `gmail-multi.ts` (reimplemented here — separate repo, same accounts).
+- **`src/pipelines/execute-outreach.ts`** — cold outreach: Strategy →
+  Generation (Phase 4's agents, reused) → send-guard → send → record →
+  advance stage.
+- **`src/agents/outreach-followup-agent.ts`** +
+  **`src/pipelines/send-followups.ts`** — finds deals in "Contacted" with
+  no reply, due per the same 3/6/9-day cadence as hartwich-os's own
+  `cadence.ts` (`followup-cadence.ts`), generates one follow-up fresh
+  (not the copy Phase 4 pre-drafted, which has nothing real to reference
+  yet), sends through the same guard, and records it without moving the
+  stage again.
+- **`src/cli/outreach-control.ts`** (`npm run outreach:control --`) — the
+  actual intervention tool: `status`, `pause "<reason>"`, `resume`,
+  `suppress <email> "<reason>"`, against real `AGENT_DATABASE_URL`.
+
+Known, deliberate Phase 5 limitation: a send failing to get *recorded*
+after it already went out (network blip, DB hiccup) reports
+`sent_but_not_recorded` rather than silently retrying — retrying could
+double-send to the same prospect, which is worse than a bookkeeping gap
+that surfaces clearly.
+
+`npm run demo:execute-outreach` runs the full autonomous send pipeline
+against fixtures — no credentials needed, and no approval step to click
+through.
+
 ## Running it
 
 ```bash
@@ -202,6 +268,7 @@ npm run demo:company-lookup   # Phase 1 demo — runs end-to-end against a fixtu
 npm run demo:discover         # Phase 2 demo — full discovery/research/qualification pipeline against fixtures
 npm run demo:goal-status      # Phase 3 demo — goal/KPI/pace/forecast/bottleneck report against fixtures
 npm run demo:outreach         # Phase 4 demo — strategy -> generation -> draft against a fixture
+npm run demo:execute-outreach # Phase 5 demo — autonomous send, guard checks and all, against a fixture
 ```
 
 Both demos use real Groq/Anthropic calls only if their API keys are set,
@@ -213,10 +280,9 @@ repo's own** schema (`src/db/schema.ts`) to `AGENT_DATABASE_URL` — never
 
 ## What's next
 
-Per `SPEC.md` §55: Phase 5 — Outreach Execution and Follow-Up, with
-autonomous operation inside the policies Phase 4 defined. This is where
-hartwich-os's own Gmail sending, warm-up ramp, and rate limits actually
-get wired into this repo's tool layer, and where "Workforce Capacity"
-(agent queue depth, concurrency limits) starts to mean something — there's
-no task queue for it to describe until agents run concurrently against
-real volume.
+Per `SPEC.md` §55: Phase 6 — Conversation Intelligence and the Appointment
+Agent. This is what finally lets Phase 5's sends generate real inbound
+data (replies get classified — interested/objection/price/unsubscribe/
+etc. — instead of every reply being untouched), and is also what should
+turn the opt-out list from "manually maintained" into
+"auto-detected from an unsubscribe reply."

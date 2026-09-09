@@ -31,6 +31,9 @@ class PrintingWriteStore implements HartwichWriteStore {
   async createEmailDraft(): Promise<never> {
     throw new Error("not used by this demo — see demo-outreach.ts for Phase 4");
   }
+  async recordOutboundEmail(): Promise<never> {
+    throw new Error("not used by this demo — see demo-execute-outreach.ts for Phase 5");
+  }
 }
 
 const FIXTURE_SEARCH_RESPONSE = {

@@ -30,6 +30,7 @@ const TARGET: OutreachTarget = {
   },
   contact: { id: "22222222-2222-4222-8222-222222222222", name: null, title: null, email: "info@example-hvac.test" },
   dealId: "33333333-3333-4333-8333-333333333333",
+  dealStageName: "New Lead",
 };
 
 class FakeDraftStore implements HartwichWriteStore {
@@ -40,6 +41,9 @@ class FakeDraftStore implements HartwichWriteStore {
   async createEmailDraft(input: CreateEmailDraftInput) {
     this.drafts.push(input);
     return { draftId: `draft-${this.drafts.length}` };
+  }
+  async recordOutboundEmail(): Promise<never> {
+    throw new Error("not used by this test — see tests/execute-outreach.test.ts for Phase 5");
   }
 }
 
