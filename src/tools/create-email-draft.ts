@@ -26,8 +26,8 @@ export function createCreateEmailDraftTool(
     description: "Create a pending-review outreach email draft in hartwich-os.",
     mutating: true,
     inputSchema: InputSchema,
-    async execute(input) {
-      return store.createEmailDraft(input);
+    async execute(input, ctx) {
+      return store.createEmailDraft(input, ctx.agentId);
     },
   };
 }

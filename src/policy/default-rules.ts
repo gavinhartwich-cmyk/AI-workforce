@@ -33,6 +33,11 @@ import { AUTONOMY } from "../runtime/autonomy-levels.js";
  * replies (src/outreach/reply-routing.ts never lets those get an
  * autonomous reply).
  *
+ * Phase 7's CRM-completeness tools (`create_escalation_task`,
+ * `append_company_note`) are the same "routine CRM administration" as
+ * `persist_discovered_company` — SPEC.md §32 lists "create tasks" and
+ * "record decisions" as autonomous CRM Agent responsibilities.
+ *
  * Later phases add rules here for pricing/offer changes, new channels,
  * etc. — see SPEC.md §18's `AuthorityPolicy` (maxVolume/maxBudget/
  * maxChangePercent) for the richer shape those will need; this is
@@ -48,4 +53,6 @@ export const DEFAULT_POLICY_RULES: PolicyRule[] = [
   { tool: "close_deal_lost", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
   { tool: "flag_deal_for_review", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
   { tool: "notify_gavin", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
+  { tool: "create_escalation_task", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
+  { tool: "append_company_note", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
 ];

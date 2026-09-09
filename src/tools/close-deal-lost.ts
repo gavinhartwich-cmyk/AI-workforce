@@ -13,8 +13,8 @@ export function createCloseDealLostTool(
     description: "Move a deal to the Lost pipeline stage.",
     mutating: true,
     inputSchema: InputSchema,
-    async execute(input) {
-      await store.moveDealToLostStage(input.dealId);
+    async execute(input, ctx) {
+      await store.moveDealToLostStage(input.dealId, ctx.agentId);
       return { ok: true };
     },
   };

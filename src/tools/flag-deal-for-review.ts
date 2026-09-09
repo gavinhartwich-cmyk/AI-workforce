@@ -13,8 +13,8 @@ export function createFlagDealForReviewTool(
     description: "Flag a deal as needing a human look.",
     mutating: true,
     inputSchema: InputSchema,
-    async execute(input) {
-      await store.flagDealForReview(input.dealId);
+    async execute(input, ctx) {
+      await store.flagDealForReview(input.dealId, ctx.agentId);
       return { ok: true };
     },
   };

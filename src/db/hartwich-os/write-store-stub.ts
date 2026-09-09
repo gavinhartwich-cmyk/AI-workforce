@@ -8,6 +8,8 @@ import type {
   RecordOutboundEmailResult,
   RecordInboundReplyInput,
   RecordInboundReplyResult,
+  CreateTaskInput,
+  CreateTaskResult,
 } from "./write-store.js";
 
 /**
@@ -35,5 +37,11 @@ export class NotImplementedWriteStore implements HartwichWriteStore {
   }
   async flagDealForReview(_dealId: string): Promise<void> {
     throw new Error("flagDealForReview: not implemented by this fake");
+  }
+  async createTask(_input: CreateTaskInput): Promise<CreateTaskResult> {
+    throw new Error("createTask: not implemented by this fake");
+  }
+  async appendCompanyNote(_companyId: string, _note: string): Promise<void> {
+    throw new Error("appendCompanyNote: not implemented by this fake");
   }
 }

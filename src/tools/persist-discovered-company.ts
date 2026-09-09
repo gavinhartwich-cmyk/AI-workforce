@@ -54,8 +54,8 @@ export function createPersistDiscoveredCompanyTool(
       "Commit a discovered-and-qualified lead into hartwich-os's CRM: company row, contact (if found), and deal (if qualified).",
     mutating: true,
     inputSchema: InputSchema,
-    async execute(input) {
-      return store.persistDiscoveredCompany(input);
+    async execute(input, ctx) {
+      return store.persistDiscoveredCompany(input, ctx.agentId);
     },
   };
 }

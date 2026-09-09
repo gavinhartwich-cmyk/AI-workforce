@@ -14,9 +14,11 @@ import { createFlagDealForReviewTool } from "../src/tools/flag-deal-for-review.j
 import { createNotifyGavinTool } from "../src/tools/notify-gavin.js";
 import { createSendEmailTool } from "../src/tools/send-email.js";
 import { createRecordOutboundEmailTool } from "../src/tools/record-outbound-email.js";
+import { createCreateEscalationTaskTool } from "../src/tools/create-escalation-task.js";
+import { createAppendCompanyNoteTool } from "../src/tools/append-company-note.js";
 import type { GmailReader, GmailSender, SendEmailInput, SendEmailResult, UnreadMessageRef } from "../src/integrations/gmail.js";
 import { NotImplementedWriteStore } from "../src/db/hartwich-os/write-store-stub.js";
-import type { RecordInboundReplyInput, RecordOutboundEmailInput } from "../src/db/hartwich-os/write-store.js";
+import type { RecordInboundReplyInput, RecordOutboundEmailInput, CreateTaskInput } from "../src/db/hartwich-os/write-store.js";
 import type { OptOutStore } from "../src/outreach/opt-out-store.js";
 import type { OutreachControlStore } from "../src/outreach/outreach-control-store.js";
 import type { EmailAccountsStore, EmailAccountState } from "../src/db/hartwich-os/email-accounts-store.js";
@@ -69,6 +71,8 @@ class FakeWriteStore extends NotImplementedWriteStore {
   outboundRecorded: RecordOutboundEmailInput[] = [];
   closedLostDealIds: string[] = [];
   flaggedDealIds: string[] = [];
+  tasksCreated: CreateTaskInput[] = [];
+  notesAppended: { companyId: string; note: string }[] = [];
   async recordInboundReply(input: RecordInboundReplyInput) {
     this.inboundRecorded.push(input);
     return { activityId: "inbound-activity-1", messageId: "inbound-message-1" };
@@ -82,6 +86,13 @@ class FakeWriteStore extends NotImplementedWriteStore {
   }
   async flagDealForReview(dealId: string) {
     this.flaggedDealIds.push(dealId);
+  }
+  async createTask(input: CreateTaskInput) {
+    this.tasksCreated.push(input);
+    return { taskId: `task-${this.tasksCreated.length}` };
+  }
+  async appendCompanyNote(companyId: string, note: string) {
+    this.notesAppended.push({ companyId, note });
   }
 }
 
@@ -133,7 +144,9 @@ function buildPipeline(opts: { replyText: string; classification: Record<string,
     .register(createFlagDealForReviewTool(writeStore))
     .register(createNotifyGavinTool(gmailSender))
     .register(createSendEmailTool(gmailSender))
-    .register(createRecordOutboundEmailTool(writeStore));
+    .register(createRecordOutboundEmailTool(writeStore))
+    .register(createCreateEscalationTaskTool(writeStore))
+    .register(createAppendCompanyNoteTool(writeStore));
 
   const provider = new FakeModelProvider({
     responsesBySchema: {
@@ -234,6 +247,9 @@ describe("HandleInboundRepliesPipeline", () => {
     expect(results[0].outcome).toBe("closed_lost");
     expect(writeStore.closedLostDealIds).toEqual([DEAL_ID]);
     expect(gmailSender.sent).toHaveLength(0);
+    expect(writeStore.notesAppended).toHaveLength(1);
+    expect(writeStore.notesAppended[0].companyId).toBe(COMPANY_ID);
+    expect(writeStore.notesAppended[0].note).toMatch(/Closed lost — reply classified NOT_INTERESTED/);
   });
 
   it("escalates PRICE to Gavin instead of replying autonomously", async () => {
@@ -249,6 +265,13 @@ describe("HandleInboundRepliesPipeline", () => {
     // notify_gavin sends via account 0 — the only "send" that happens for an escalation.
     expect(gmailSender.sent).toHaveLength(1);
     expect(gmailSender.sent[0].to).toBe("gavinhartwich@gmail.com");
+    expect(writeStore.notesAppended).toHaveLength(1);
+    expect(writeStore.notesAppended[0].companyId).toBe(COMPANY_ID);
+    expect(writeStore.notesAppended[0].note).toMatch(/Escalated to Gavin — reply classified PRICE/);
+    expect(writeStore.tasksCreated).toHaveLength(1);
+    expect(writeStore.tasksCreated[0].companyId).toBe(COMPANY_ID);
+    expect(writeStore.tasksCreated[0].dealId).toBe(DEAL_ID);
+    expect(writeStore.tasksCreated[0].description).toMatch(/needs a human response/);
   });
 
   it("takes no action on an out-of-office auto-reply", async () => {

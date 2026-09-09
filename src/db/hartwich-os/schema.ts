@@ -173,6 +173,39 @@ export const emailDrafts = pgTable("email_drafts", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// audit_log — exists in hartwich-os's own schema but nothing has ever
+// written to it (GAP_ANALYSIS.md §3 gap #7). Phase 7 finally wires it up:
+// every consequential write this repo makes also inserts a row here, so
+// "why did the system do this" is answerable inside hartwich-os itself,
+// not only in this repo's own agent_runs table. userId stays null for
+// agent-driven changes (hartwich-os's own schema allows this — it's a
+// human-user foreign key); the diff jsonb carries which of THIS repo's
+// agents/pipelines acted instead.
+export const auditLog = pgTable("audit_log", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: uuid("user_id"),
+  action: text("action").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: uuid("entity_id").notNull(),
+  diff: jsonb("diff").$type<Record<string, unknown>>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// tasks — hartwich-os's own follow-up-reminder table (its architecture
+// doc §3, "Calendar sync" v1.1). Phase 7 creates one when Conversation
+// Intelligence escalates something (SPEC.md §32: "create tasks" is on the
+// CRM Agent's autonomous list) — a task shows up on Gavin's existing
+// /calendar page, not only as an email alert.
+export const tasks = pgTable("tasks", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  dealId: uuid("deal_id"),
+  companyId: uuid("company_id"),
+  dueDate: timestamp("due_date", { withTimezone: true }).notNull(),
+  description: text("description").notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const companiesRelations = relations(companies, ({ many }) => ({
   contacts: many(contacts),
   deals: many(deals),

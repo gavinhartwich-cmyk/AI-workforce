@@ -21,8 +21,8 @@ export function createRecordInboundReplyTool(
     description: "Record a genuine inbound reply as a CRM activity/message and advance the deal to Engaged.",
     mutating: true,
     inputSchema: InputSchema,
-    async execute(input) {
-      return store.recordInboundReply(input);
+    async execute(input, ctx) {
+      return store.recordInboundReply(input, ctx.agentId);
     },
   };
 }

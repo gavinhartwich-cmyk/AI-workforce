@@ -31,8 +31,8 @@ export function createRecordOutboundEmailTool(
     description: "Record a sent email as a CRM activity/message and advance the deal.",
     mutating: true,
     inputSchema: InputSchema,
-    async execute(input) {
-      return store.recordOutboundEmail(input);
+    async execute(input, ctx) {
+      return store.recordOutboundEmail(input, ctx.agentId);
     },
   };
 }

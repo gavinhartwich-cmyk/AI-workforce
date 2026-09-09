@@ -10,6 +10,7 @@ import { appointmentAgent } from "../agents/appointment-agent.js";
 import { decideReplyAction } from "../outreach/reply-routing.js";
 import { checkSendAllowed } from "../outreach/send-guard.js";
 import { buildBookingLink } from "../outreach/booking-link.js";
+import { buildCompanyUrl } from "../outreach/app-url.js";
 import type { OptOutStore } from "../outreach/opt-out-store.js";
 import type { OutreachControlStore } from "../outreach/outreach-control-store.js";
 import type { EmailAccountsStore } from "../db/hartwich-os/email-accounts-store.js";
@@ -119,7 +120,11 @@ export class HandleInboundRepliesPipeline {
       }
 
       case "close_lost": {
-        if (reply.dealId) await this.invokeTool("close_deal_lost", { dealId: reply.dealId });
+        if (reply.dealId) await this.invokeBestEffort("close_deal_lost", { dealId: reply.dealId });
+        await this.invokeBestEffort("append_company_note", {
+          companyId: reply.companyId,
+          note: `Closed lost — reply classified ${classification.classification}: ${classification.summary}`,
+        });
         return { threadId: reply.threadId, outcome: "closed_lost", classification: classification.classification };
       }
 
@@ -127,11 +132,22 @@ export class HandleInboundRepliesPipeline {
         return { threadId: reply.threadId, outcome: "no_action", classification: classification.classification };
 
       case "escalate": {
+        const companyLink = buildCompanyUrl(reply.companyId);
         await this.invokeTool("notify_gavin", {
           subject: `${reply.company.name} needs a look (${classification.classification})`,
-          body: `${reply.company.name} replied: "${classification.summary}"\n\nClassification: ${classification.classification}\nConfidence: ${classification.confidence}\n\nOriginal message:\n${reply.bodyText}`,
+          body: `${reply.company.name} replied: "${classification.summary}"\n\nClassification: ${classification.classification}\nConfidence: ${classification.confidence}\n\nOriginal message:\n${reply.bodyText}\n\n${companyLink}`,
         });
-        if (reply.dealId) await this.invokeTool("flag_deal_for_review", { dealId: reply.dealId });
+        if (reply.dealId) await this.invokeBestEffort("flag_deal_for_review", { dealId: reply.dealId });
+        await this.invokeBestEffort("append_company_note", {
+          companyId: reply.companyId,
+          note: `Escalated to Gavin — reply classified ${classification.classification}: ${classification.summary}`,
+        });
+        await this.invokeBestEffort("create_escalation_task", {
+          companyId: reply.companyId,
+          dealId: reply.dealId,
+          dueDate: new Date(now.getTime() + 4 * 60 * 60 * 1000), // 4 hours out — PRICE/HOSTILE are urgent, not next-week items
+          description: `${reply.company.name} replied (${classification.classification}) and needs a human response — ${companyLink}`,
+        });
         return { threadId: reply.threadId, outcome: "escalated", classification: classification.classification };
       }
 
@@ -144,6 +160,12 @@ export class HandleInboundRepliesPipeline {
           await this.invokeTool("notify_gavin", {
             subject: `${reply.company.name} replied — incomplete CRM record`,
             body: `${reply.company.name} (${reply.fromAddress}) replied but is missing a contact or deal record:\n\n${reply.bodyText}`,
+          });
+          await this.invokeBestEffort("create_escalation_task", {
+            companyId: reply.companyId,
+            dealId: reply.dealId,
+            dueDate: new Date(now.getTime() + 4 * 60 * 60 * 1000),
+            description: `${reply.company.name} replied but is missing a contact or deal record — needs a manual look.`,
           });
           return { threadId: reply.threadId, outcome: "escalated", classification: classification.classification };
         }
@@ -246,5 +268,21 @@ export class HandleInboundRepliesPipeline {
       toolInput,
       ctx: { agentId: "inbound_reply_pipeline", runId },
     });
+  }
+
+  /**
+   * For secondary CRM bookkeeping (a note, an escalation task, closing a
+   * deal) that shouldn't block or fail the primary outcome we already
+   * committed to (closed_lost / escalated) — a missing tool registration
+   * or a transient write failure here shouldn't look like the reply itself
+   * was mishandled. Still surfaced, never swallowed silently: logged so
+   * it's visible in the pipeline's own output/monitoring, per Gavin's
+   * "properly handled... I can still see" bar from Phase 5.
+   */
+  private async invokeBestEffort(toolName: string, toolInput: unknown): Promise<void> {
+    const result = await this.invokeTool(toolName, toolInput);
+    if (result.status !== "succeeded") {
+      console.error(`${toolName} ${result.status}: ${result.status === "denied" ? result.reason : result.error}`);
+    }
   }
 }

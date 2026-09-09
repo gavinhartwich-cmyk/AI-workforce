@@ -321,6 +321,60 @@ someone asking a person to stop emailing them, not a list opt-out.
 the way through — appointment intent detected, real booking link
 generated, sent in-thread, recorded — no credentials, no approval step.
 
+## Phase 7 status — done
+
+The CRM Agent (`SPEC.md` §55 Phase 7). Most of hartwich-os's CRM was
+already updating itself automatically as a side effect of Phases 2-6 —
+this phase's job (`SPEC.md` §32: "human CRM administration should
+approach zero") was closing the specific gaps `GAP_ANALYSIS.md` flagged,
+not rebuilding what already worked.
+
+- **`src/db/hartwich-os/write-store.ts`** — every write now also inserts
+  an `audit_log` row (`GAP_ANALYSIS.md` §3 gap #7: the table existed in
+  hartwich-os's own schema but nothing had ever written to it). Every
+  `HartwichWriteStore` method now takes an `actor: string` — threaded
+  through from the existing `ctx: ToolContext` (`agentId`) every tool
+  already receives, so "which agent made this change" is on the record
+  without adding a redundant field to any tool's Zod input schema.
+- **`src/tools/create-escalation-task.ts`** + a new hartwich-os `tasks`
+  table — a PRICE/HOSTILE escalation, or a reply with no contact/deal on
+  file, now also creates a task due a few hours out, so it shows up on
+  Gavin's existing `/calendar` page, not only as a `notify_gavin` email
+  (`SPEC.md` §32's "create tasks").
+- **`src/tools/append-company-note.ts`** + **`src/outreach/notes.ts`** —
+  closing a deal Lost or escalating a reply now appends a timestamped
+  note to the company record (`SPEC.md` §32's "record decisions"),
+  additive only — it never overwrites anything Gavin wrote by hand.
+- **`src/outreach/app-url.ts`** — a real link to the company's hartwich-os
+  page in both the escalation email and the new task's description, same
+  pattern as Phase 6's booking link: build the URL, don't invent one.
+- **`src/pipelines/handle-inbound-replies.ts`** — wires the above into
+  the `close_lost`/`escalate` routes, plus a `create_escalation_task`
+  call in the pre-existing "reply has no contact/deal on file" fallback.
+  These are secondary bookkeeping calls, not the primary outcome already
+  decided — a new `invokeBestEffort` helper logs a failure instead of
+  silently swallowing it (the pre-existing `close_deal_lost`/
+  `flag_deal_for_review` calls had this same gap; fixed here too) or
+  letting a note/task failure look like the reply itself was mishandled.
+- **`src/policy/default-rules.ts`** — both new tools are
+  `AUTONOMOUS_ROUTINE`, the same level as every other CRM write —
+  "create tasks" and "record decisions" are on `SPEC.md` §32's list of
+  autonomous CRM Agent responsibilities, not a new authority level.
+
+**Deliberately out of scope:** hartwich-os's `sequences`/`sequence_steps`
+tables stay unused, consistent with `GAP_ANALYSIS.md`'s existing finding
+that they're dead schema — not force-fit into this phase. And no code
+path here ever moves a deal to **Won** autonomously; that's a genuine
+commercial/contractual event, and "AI shouldn't change the business
+model" (an existing Sales Manager principle in `SPEC.md`) extends
+naturally to "AI shouldn't declare a sale won" — that stays a human
+action in hartwich-os itself.
+
+`npm run demo:handle-replies` now runs two scenarios back to back: the
+existing INTERESTED+appointment-intent autonomous reply (Phase 6), and a
+new PRICE reply that gets escalated — flagged for review, a company note
+appended, and a task created (Phase 7) — instead of an autonomous reply.
+
 ## Running it
 
 ```bash
@@ -334,7 +388,7 @@ npm run demo:discover         # Phase 2 demo — full discovery/research/qualifi
 npm run demo:goal-status      # Phase 3 demo — goal/KPI/pace/forecast/bottleneck report against fixtures
 npm run demo:outreach         # Phase 4 demo — strategy -> generation -> draft against a fixture
 npm run demo:execute-outreach # Phase 5 demo — autonomous send, guard checks and all, against a fixture
-npm run demo:handle-replies   # Phase 6 demo — classify a reply, hand back a real booking link, send in-thread
+npm run demo:handle-replies   # Phase 6/7 demo — classify replies, autonomous reply + escalation with CRM note/task
 ```
 
 Both demos use real Groq/Anthropic calls only if their API keys are set,
@@ -346,8 +400,4 @@ repo's own** schema (`src/db/schema.ts`) to `AGENT_DATABASE_URL` — never
 
 ## What's next
 
-Per `SPEC.md` §55: Phase 7 — the CRM Agent. Much of this is already true
-in practice (companies/contacts/deals/activities/messages already update
-automatically as Phases 2-6 run) — Phase 7's job is closing the remaining
-gaps so human CRM administration approaches zero for a normal sales
-interaction, per `SPEC.md` §32.
+Per `SPEC.md` §55: Phase 8 — the Sales Analyst.

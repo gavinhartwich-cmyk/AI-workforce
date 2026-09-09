@@ -1,9 +1,15 @@
 /**
- * Phase 6 demo — classify one inbound reply and route it, end to end
+ * Phase 6/7 demo — classify inbound replies and route them, end to end
  * against fixtures (no Gmail/HARTWICH_DATABASE_URL credentials needed).
- * Shows the full autonomous path: reply comes in -> classified -> the
- * Appointment Agent hands back a real hartwich-os booking link -> sent
- * in-thread -> recorded as a CRM activity. No approval step.
+ *
+ * Two scenarios, run back to back:
+ *  1. INTERESTED + appointment intent -> the Appointment Agent hands back a
+ *     real hartwich-os booking link -> sent in-thread -> recorded as a CRM
+ *     activity. No approval step (Phase 6).
+ *  2. PRICE -> escalated to Gavin instead of an autonomous reply: an alert
+ *     email, the deal flagged for review, a timestamped company note, and a
+ *     hartwich-os task due in 4 hours so it shows up on Gavin's /calendar
+ *     page (Phase 7 — SPEC.md §32).
  *
  * Run with: npm run demo:handle-replies
  */
@@ -23,9 +29,11 @@ import { createFlagDealForReviewTool } from "./tools/flag-deal-for-review.js";
 import { createNotifyGavinTool } from "./tools/notify-gavin.js";
 import { createSendEmailTool } from "./tools/send-email.js";
 import { createRecordOutboundEmailTool } from "./tools/record-outbound-email.js";
+import { createCreateEscalationTaskTool } from "./tools/create-escalation-task.js";
+import { createAppendCompanyNoteTool } from "./tools/append-company-note.js";
 import type { GmailReader, GmailSender, SendEmailInput, SendEmailResult, UnreadMessageRef } from "./integrations/gmail.js";
 import { NotImplementedWriteStore } from "./db/hartwich-os/write-store-stub.js";
-import type { RecordOutboundEmailInput } from "./db/hartwich-os/write-store.js";
+import type { CreateTaskInput, RecordOutboundEmailInput } from "./db/hartwich-os/write-store.js";
 import type { OptOutStore } from "./outreach/opt-out-store.js";
 import type { OutreachControlStore } from "./outreach/outreach-control-store.js";
 import type { EmailAccountsStore, EmailAccountState } from "./db/hartwich-os/email-accounts-store.js";
@@ -35,31 +43,33 @@ const COMPANY_ID = "11111111-1111-4111-8111-111111111111";
 const CONTACT_ID = "22222222-2222-4222-8222-222222222222";
 const DEAL_ID = "33333333-3333-4333-8333-333333333333";
 const WEEKDAY_BUSINESS_HOURS = new Date("2026-01-07T16:00:00Z"); // Wed 10am Winnipeg
-const REPLY_TEXT = "Oh wow, this is exactly what we need. Can we set up a quick call?";
 
 process.env.HARTWICH_APP_URL ??= "https://hartwich-os-demo.example.com";
+process.env.GAVIN_EMAIL ??= "gavinhartwich@gmail.com";
 
-class FixtureGmailReader implements GmailReader {
-  async listUnread(accountIndex: 0 | 1 | 2): Promise<UnreadMessageRef[]> {
-    return accountIndex === 0 ? [{ id: "gmail-msg-1", threadId: "thread-1" }] : [];
-  }
-  async getMessage(): Promise<gmail_v1.Schema$Message> {
-    return {
-      id: "gmail-msg-1",
-      threadId: "thread-1",
-      payload: {
-        headers: [
-          { name: "From", value: "Prospect <info@example-hvac.test>" },
-          { name: "Message-Id", value: "<reply-1@mail.gmail.com>" },
-        ],
-        mimeType: "text/plain",
-        body: { data: Buffer.from(REPLY_TEXT).toString("base64url") },
-      },
-    };
-  }
-  async markRead(accountIndex: 0 | 1 | 2, messageId: string): Promise<void> {
-    console.log(`  → would mark account ${accountIndex}'s message ${messageId} read.`);
-  }
+function buildFixtureReader(replyText: string): GmailReader {
+  return {
+    async listUnread(accountIndex: 0 | 1 | 2): Promise<UnreadMessageRef[]> {
+      return accountIndex === 0 ? [{ id: "gmail-msg-1", threadId: "thread-1" }] : [];
+    },
+    async getMessage(): Promise<gmail_v1.Schema$Message> {
+      return {
+        id: "gmail-msg-1",
+        threadId: "thread-1",
+        payload: {
+          headers: [
+            { name: "From", value: "Prospect <info@example-hvac.test>" },
+            { name: "Message-Id", value: "<reply-1@mail.gmail.com>" },
+          ],
+          mimeType: "text/plain",
+          body: { data: Buffer.from(replyText).toString("base64url") },
+        },
+      };
+    },
+    async markRead(accountIndex: 0 | 1 | 2, messageId: string): Promise<void> {
+      console.log(`  → would mark account ${accountIndex}'s message ${messageId} read.`);
+    },
+  };
 }
 
 class PrintingGmailSender implements GmailSender {
@@ -73,12 +83,22 @@ class PrintingGmailSender implements GmailSender {
 
 class PrintingWriteStore extends NotImplementedWriteStore {
   async recordInboundReply() {
-    console.log(`  → would record the inbound reply and move the deal to "Engaged".`);
+    console.log(`  → would record the inbound reply.`);
     return { activityId: "demo-inbound-activity", messageId: "demo-inbound-message" };
   }
   async recordOutboundEmail(input: RecordOutboundEmailInput) {
     console.log(`  → would record this "${input.kind}" as a hartwich-os activity/message.`);
     return { activityId: "demo-outbound-activity", messageId: "demo-outbound-message" };
+  }
+  async flagDealForReview(dealId: string) {
+    console.log(`  → would flag deal ${dealId} for Gavin's review.`);
+  }
+  async appendCompanyNote(companyId: string, note: string) {
+    console.log(`  → would append a note to company ${companyId}: "${note}"`);
+  }
+  async createTask(input: CreateTaskInput) {
+    console.log(`  → would create a hartwich-os task due ${input.dueDate.toISOString()}: "${input.description}"`);
+    return { taskId: "demo-task-1" };
   }
 }
 
@@ -104,8 +124,8 @@ class FreshAccounts implements EmailAccountsStore {
   async recordSend() {}
 }
 
-async function main() {
-  const gmailReader = new FixtureGmailReader();
+function buildPipeline(replyText: string, classification: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+  const gmailReader = buildFixtureReader(replyText);
   const gmailSender = new PrintingGmailSender();
   const writeStore = new PrintingWriteStore();
 
@@ -126,26 +146,14 @@ async function main() {
     .register(createFlagDealForReviewTool(writeStore))
     .register(createNotifyGavinTool(gmailSender))
     .register(createSendEmailTool(gmailSender))
-    .register(createRecordOutboundEmailTool(writeStore));
+    .register(createRecordOutboundEmailTool(writeStore))
+    .register(createCreateEscalationTaskTool(writeStore))
+    .register(createAppendCompanyNoteTool(writeStore));
 
   const provider = new FakeModelProvider({
     responsesBySchema: {
-      conversation_intelligence_agent_output: {
-        classification: "INTERESTED",
-        buyingIntent: 85,
-        objections: [],
-        requestedInfo: [],
-        requestedFollowUpDate: null,
-        isDecisionMaker: "unknown",
-        appointmentIntent: true,
-        sentiment: "positive",
-        confidence: 95,
-        summary: "Excited and wants to book a call.",
-      },
-      appointment_agent_output: {
-        subject: "Re: Quick note about your reviews",
-        body: `Great to hear! Here's a link to grab a time that works for you: ${process.env.HARTWICH_APP_URL}/book?company=${COMPANY_ID}&contact=${CONTACT_ID}&deal=${DEAL_ID}\n\nTalk soon,\nGavin`,
-      },
+      conversation_intelligence_agent_output: classification,
+      ...extra,
     },
   });
 
@@ -157,7 +165,7 @@ async function main() {
     audit: { record: async () => {} },
   });
 
-  const pipeline = new HandleInboundRepliesPipeline({
+  return new HandleInboundRepliesPipeline({
     runtime,
     tools,
     policy,
@@ -165,10 +173,62 @@ async function main() {
     control: new NotPaused(),
     accounts: new FreshAccounts(),
   });
+}
 
-  console.log(`Reply received: "${REPLY_TEXT}"\n`);
+async function runInterestedScenario() {
+  const replyText = "Oh wow, this is exactly what we need. Can we set up a quick call?";
+  console.log(`Reply received: "${replyText}"\n`);
+
+  const pipeline = buildPipeline(
+    replyText,
+    {
+      classification: "INTERESTED",
+      buyingIntent: 85,
+      objections: [],
+      requestedInfo: [],
+      requestedFollowUpDate: null,
+      isDecisionMaker: "unknown",
+      appointmentIntent: true,
+      sentiment: "positive",
+      confidence: 95,
+      summary: "Excited and wants to book a call.",
+    },
+    {
+      appointment_agent_output: {
+        subject: "Re: Quick note about your reviews",
+        body: `Great to hear! Here's a link to grab a time that works for you: ${process.env.HARTWICH_APP_URL}/book?company=${COMPANY_ID}&contact=${CONTACT_ID}&deal=${DEAL_ID}\n\nTalk soon,\nGavin`,
+      },
+    }
+  );
+
   const results = await pipeline.runAll(WEEKDAY_BUSINESS_HOURS);
   console.log(`\nOutcome: ${results[0]?.outcome}`);
+}
+
+async function runPriceEscalationScenario() {
+  const replyText = "This looks great but what would this actually cost us?";
+  console.log(`\n\n---\n\nReply received: "${replyText}"\n`);
+
+  const pipeline = buildPipeline(replyText, {
+    classification: "PRICE",
+    buyingIntent: 60,
+    objections: ["price"],
+    requestedInfo: ["pricing"],
+    requestedFollowUpDate: null,
+    isDecisionMaker: "unknown",
+    appointmentIntent: false,
+    sentiment: "neutral",
+    confidence: 90,
+    summary: "Asking about pricing before committing.",
+  });
+
+  const results = await pipeline.runAll(WEEKDAY_BUSINESS_HOURS);
+  console.log(`\nOutcome: ${results[0]?.outcome} (Phase 7: note + task created, per SPEC.md §32)`);
+}
+
+async function main() {
+  await runInterestedScenario();
+  await runPriceEscalationScenario();
 }
 
 main().catch((err) => {
