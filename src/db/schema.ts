@@ -12,11 +12,11 @@
  *
  * Tables here correspond to spec §38/§48's `agent_*`/`sales_*`/`manager_*`
  * family. Phase 1 added `agent_runs` (the audit log) and
- * `agent_permissions` (policy rules). Phase 3 (SPEC.md §55) adds the
- * Goal/KPI/Forecast/Manager-Decision tables below. Still not here:
- * `agent_goals`, `agent_tasks`, `agent_memory`, `agent_metrics`,
- * `experiments*`, `approval_requests` — added in the phases that actually
- * use them, not speculatively now.
+ * `agent_permissions` (policy rules). Phase 3 added the
+ * Goal/KPI/Forecast/Manager-Decision tables. Phase 4 (SPEC.md §55) adds
+ * `experiments`/`experiment_variants` below. Still not here: `agent_goals`,
+ * `agent_tasks`, `agent_memory`, `agent_metrics`, `approval_requests` —
+ * added in the phases that actually use them, not speculatively now.
  */
 
 import { relations } from "drizzle-orm";
@@ -204,4 +204,42 @@ export const salesForecastsRelations = relations(salesForecasts, ({ one }) => ({
 
 export const managerDecisionsRelations = relations(managerDecisions, ({ one }) => ({
   goal: one(salesGoals, { fields: [managerDecisions.goalId], references: [salesGoals.id] }),
+}));
+
+// ---------------------------------------------------------------------------
+// experiments / experiment_variants — controlled outreach tests
+// (SPEC.md §34). Variant *assignment* is a pure deterministic hash function
+// (src/experiments/assignment.ts) — no per-prospect assignment table to
+// maintain, since the same (experimentId, prospectId) pair always resolves
+// the same way.
+// ---------------------------------------------------------------------------
+
+export const experimentStatusEnum = pgEnum("experiment_status", ["running", "stopped", "concluded"]);
+
+export const experiments = pgTable("experiments", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  minSampleSizePerVariant: integer("min_sample_size_per_variant").notNull(),
+  status: experimentStatusEnum("status").notNull().default("running"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const experimentVariants = pgTable("experiment_variants", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  experimentId: uuid("experiment_id")
+    .notNull()
+    .references(() => experiments.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  directive: text("directive").notNull(),
+  weight: numeric("weight", { precision: 5, scale: 2 }).notNull().default("1"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const experimentsRelations = relations(experiments, ({ many }) => ({
+  variants: many(experimentVariants),
+}));
+
+export const experimentVariantsRelations = relations(experimentVariants, ({ one }) => ({
+  experiment: one(experiments, { fields: [experimentVariants.experimentId], references: [experiments.id] }),
 }));

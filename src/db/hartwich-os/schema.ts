@@ -18,6 +18,13 @@ import { relations } from "drizzle-orm";
 export const companySourceEnum = pgEnum("company_source", ["google_places", "apollo", "manual"]);
 export const companyStatusEnum = pgEnum("company_status", ["needs_review", "qualified", "disqualified"]);
 export const contactTierEnum = pgEnum("contact_tier", ["A", "B", "C"]);
+export const emailDraftStatusEnum = pgEnum("email_draft_status", ["pending_review", "approved", "rejected", "sent"]);
+export const emailDraftKindEnum = pgEnum("email_draft_kind", [
+  "cold_outreach",
+  "follow_up",
+  "bounce_correction",
+  "reply",
+]);
 
 export const pipelineStages = pgTable("pipeline_stages", {
   id: uuid("id").primaryKey(),
@@ -77,6 +84,25 @@ export const deals = pgTable("deals", {
   stageEnteredAt: timestamp("stage_entered_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// email_drafts — hartwich-os's existing human-approval queue (its own
+// PHASE_3.md). Phase 4 writes into this SAME table (kind: "cold_outreach",
+// status: "pending_review") rather than inventing a parallel drafts
+// system — Gavin already has a UI for this in hartwich-os today. Only the
+// columns this repo's create_email_draft tool sets are mirrored;
+// approvedBy/rejectedBy/sentAt/etc. are hartwich-os's own send-flow
+// concerns, not something this repo reads or writes.
+export const emailDrafts = pgTable("email_drafts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  companyId: uuid("company_id").notNull(),
+  contactId: uuid("contact_id").notNull(),
+  dealId: uuid("deal_id"),
+  subject: text("subject").notNull(),
+  body: text("body").notNull(),
+  status: emailDraftStatusEnum("status").notNull().default("pending_review"),
+  kind: emailDraftKindEnum("kind").notNull().default("cold_outreach"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const companiesRelations = relations(companies, ({ many }) => ({

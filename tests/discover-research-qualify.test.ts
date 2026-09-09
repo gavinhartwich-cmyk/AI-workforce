@@ -65,6 +65,9 @@ class FakeWriteStore implements HartwichWriteStore {
       dealId: input.status === "qualified" ? `deal-${this.persisted.length}` : null,
     };
   }
+  async createEmailDraft(): Promise<never> {
+    throw new Error("not used by this test — see tests/strategize-and-draft-outreach.test.ts for Phase 4");
+  }
 }
 
 function buildPipeline(opts: { writeStore: HartwichWriteStore; existingCompanies?: { id: string; name: string; website: string | null }[] }) {

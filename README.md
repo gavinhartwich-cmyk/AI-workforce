@@ -150,6 +150,46 @@ goal?" End to end in `src/goals/goal-status-report.ts`:
 KPI, pace, forecast, bottleneck diagnosis — against fixtures, no database
 needed.
 
+## Phase 4 status — done
+
+Outreach Strategy, Outreach Generation, an approved-messaging system, and
+an experiment engine (`SPEC.md` §55 Phase 4). **Still no sending** — Phase
+5 is what's allowed to execute; this phase only drafts.
+
+- **`src/outreach/approved-messaging-config.ts`** — the boundary every
+  outreach agent operates inside (offer, positioning, enabled channels,
+  hard rules against fabrication, follow-up cap, CTA/word-count limits),
+  as data (`SPEC.md` §20) — tightening a rule is a config edit, not a
+  prompt hunt across agent files.
+- **`src/agents/outreach-strategy-agent.ts`** — decides channel, angle,
+  hook, personalization points, and CTA for one prospect, separately from
+  wording (`SPEC.md` §26). This is new versus hartwich-os's own
+  `draft-outreach.ts`, which bakes strategy and copy into a single prompt.
+- **`src/agents/outreach-generation-agent.ts`** — turns a strategy
+  decision into the initial message plus up to `maxFollowUps` short
+  bump-ups (`SPEC.md` §27), constrained by the approved-messaging config's
+  hard rules.
+- **`src/experiments/`** — `assignment.ts` deterministically assigns a
+  prospect to a variant (a hash of `experimentId:prospectId`, so there's
+  no assignment table to maintain), `sample-size.ts` gates any conclusion
+  until every variant has enough samples (`SPEC.md` §34: never decide from
+  a tiny sample), `experiment-store.ts` is `experiments`/
+  `experiment_variants` CRUD. Scoped to "define and assign" only —
+  measuring real outcomes per variant needs sent-message data that lands
+  with Phase 5/8.
+- **`src/pipelines/strategize-and-draft-outreach.ts`** — Strategy →
+  Generation → one pending-review draft, written into hartwich-os's
+  *existing* `email_drafts` approval queue (its own `PHASE_3.md`) rather
+  than a second inbox — Gavin already has a review UI for this today. A
+  prospect with no contact email is skipped (`no_contact`), not drafted to
+  nobody. Only the initial message is persisted; the generated follow-ups
+  stay in this run's audit record for Phase 5 to draw on once there's a
+  real sent message to attach them to.
+
+`npm run demo:outreach` runs Strategy → Generation → draft against a
+fixture, including an experiment directive actually reaching the Strategy
+Agent's prompt — no database needed.
+
 ## Running it
 
 ```bash
@@ -161,6 +201,7 @@ npm test                      # no network, no credentials needed
 npm run demo:company-lookup   # Phase 1 demo — runs end-to-end against a fixture
 npm run demo:discover         # Phase 2 demo — full discovery/research/qualification pipeline against fixtures
 npm run demo:goal-status      # Phase 3 demo — goal/KPI/pace/forecast/bottleneck report against fixtures
+npm run demo:outreach         # Phase 4 demo — strategy -> generation -> draft against a fixture
 ```
 
 Both demos use real Groq/Anthropic calls only if their API keys are set,
@@ -172,8 +213,10 @@ repo's own** schema (`src/db/schema.ts`) to `AGENT_DATABASE_URL` — never
 
 ## What's next
 
-Per `SPEC.md` §55: Phase 4 — Outreach Strategy, Outreach Generation, an
-approved-messaging system, and experiments. Still no sending — that's
-Phase 5, which is also where "Workforce Capacity" (agent queue depth,
-concurrency limits) becomes meaningful; there's no task queue for it to
-describe until agents run concurrently against real volume.
+Per `SPEC.md` §55: Phase 5 — Outreach Execution and Follow-Up, with
+autonomous operation inside the policies Phase 4 defined. This is where
+hartwich-os's own Gmail sending, warm-up ramp, and rate limits actually
+get wired into this repo's tool layer, and where "Workforce Capacity"
+(agent queue depth, concurrency limits) starts to mean something — there's
+no task queue for it to describe until agents run concurrently against
+real volume.

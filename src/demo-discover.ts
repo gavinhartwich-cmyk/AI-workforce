@@ -28,6 +28,9 @@ class PrintingWriteStore implements HartwichWriteStore {
     console.log(`  → would persist "${input.place.name}" as ${input.status} (score ${input.qualificationScore})`);
     return { companyId: `demo-${input.placeId}`, contactId: null, dealId: input.status === "qualified" ? `deal-${input.placeId}` : null };
   }
+  async createEmailDraft(): Promise<never> {
+    throw new Error("not used by this demo — see demo-outreach.ts for Phase 4");
+  }
 }
 
 const FIXTURE_SEARCH_RESPONSE = {
