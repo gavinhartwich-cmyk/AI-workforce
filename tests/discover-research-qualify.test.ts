@@ -31,7 +31,7 @@ const PLACES: PlaceCandidate[] = [
     phone: null,
     website: null,
     rating: 4.8,
-    userRatingCount: 210,
+    userRatingCount: 40, // under MAX_GOOGLE_REVIEW_COUNT, so the AGENT filter is what rejects it here
   },
 ];
 
@@ -68,7 +68,7 @@ class FakeWriteStore extends NotImplementedWriteStore {
   }
 }
 
-function buildPipeline(opts: { writeStore: HartwichWriteStore; existingCompanies?: { id: string; name: string; website: string | null }[] }) {
+function buildPipeline(opts: { writeStore: HartwichWriteStore; existingCompanies?: { id: string; name: string; website: string | null }[]; maxGoogleReviewCount?: number }) {
   process.env.GOOGLE_PLACES_API_KEY = "test-key"; // required by the tool's own guard, never actually hits the network here
 
   const tools = new ToolRegistry()
@@ -118,7 +118,10 @@ function buildPipeline(opts: { writeStore: HartwichWriteStore; existingCompanies
     audit,
   });
 
-  return { pipeline: new DiscoverResearchQualifyPipeline({ runtime, tools, policy, audit }), audit };
+  return {
+    pipeline: new DiscoverResearchQualifyPipeline({ runtime, tools, policy, audit, maxGoogleReviewCount: opts.maxGoogleReviewCount }),
+    audit,
+  };
 }
 
 describe("DiscoverResearchQualifyPipeline", () => {
@@ -170,5 +173,30 @@ describe("DiscoverResearchQualifyPipeline", () => {
     const hvacCo = summary.results.find((r) => r.placeId === "place-hvac-co");
     expect(hvacCo?.outcome).toBe("duplicate");
     expect(writeStore.persisted).toHaveLength(0);
+  });
+
+  it("drops a business above the ICP review ceiling before any LLM call", async () => {
+    // Hartwich Labs sells review automation — a business already holding
+    // hundreds of reviews has solved that problem and is not a prospect,
+    // however good a business it is. Gavin saw one with 300 reviews scored
+    // 75/100, because review volume reads as "quality" to the model.
+    const writeStore = new FakeWriteStore();
+    const { pipeline, audit } = buildPipeline({ writeStore, maxGoogleReviewCount: 20 });
+
+    const summary = await pipeline.run({ area: "Winnipeg, MB", keyword: "HVAC contractor" });
+
+    const tooBig = summary.results.find((r) => r.placeId === "place-supply-store");
+    expect(tooBig?.outcome).toBe("too_many_reviews");
+    expect(tooBig?.reviewCount).toBe(40);
+    expect(writeStore.persisted.some((p) => p.place.name === "Acme HVAC Supply Warehouse")).toBe(false);
+
+    // Researched exactly once — for the surviving 3-review company, not the
+    // one over the ceiling. That's the point: an out-of-ICP business costs
+    // zero research/qualification tokens.
+    const researchRuns = audit.records.filter((r) => r.agentId === "research_agent");
+    expect(researchRuns).toHaveLength(1);
+
+    // `found` still reports what the search returned, not what survived.
+    expect(summary.found).toBe(2);
   });
 });

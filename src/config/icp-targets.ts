@@ -83,6 +83,24 @@ export const NORTH_AMERICA_DISCOVERY_TARGETS: DiscoveryTarget[] = [
 export const BASE_DISCOVERY_VOLUME = 20;
 
 /**
+ * Hard ICP ceiling on Google review count (Gavin, 2026-09-10).
+ *
+ * Hartwich Labs sells review automation / reputation management. A business
+ * already sitting on 300-500+ reviews has solved that problem — it is not a
+ * prospect, however healthy a business it is. Discovery was surfacing those
+ * and the qualification agent was scoring one at 75/100, because more
+ * reviews reads as "high quality business" to the model even though for
+ * THIS offer it's the single clearest disqualifier.
+ *
+ * Enforced as a deterministic filter rather than a prompt instruction, for
+ * the same reason the scoring formula is code and not a prompt (see
+ * src/qualification/scoring.ts): the ICP boundary must not be something the
+ * model can talk itself out of. It also runs before any LLM call, so these
+ * candidates cost zero Groq tokens.
+ */
+export const MAX_GOOGLE_REVIEW_COUNT = 200;
+
+/**
  * How many metro areas one discovery cycle actually searches. Iterating
  * the full 60+-area North America list every cron run (hourly) would
  * multiply Google Places + website-fetch + Groq calls 60x per run — this

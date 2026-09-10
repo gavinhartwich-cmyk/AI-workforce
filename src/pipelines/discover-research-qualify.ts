@@ -14,6 +14,7 @@ import {
 } from "../qualification/scoring.js";
 import type { PlaceCandidate } from "../tools/search-google-places.js";
 import type { TokenBudget } from "../runtime/token-budget.js";
+import { MAX_GOOGLE_REVIEW_COUNT } from "../config/icp-targets.js";
 
 /**
  * Phase 2's end-to-end pipeline (SPEC.md §55 Phase 2): Discovery → Research
@@ -48,7 +49,11 @@ export type PipelineCompanyResult = {
     | "duplicate"
     | "error"
     /** Stopped short to leave Groq tokens for the Sales Manager chat — see src/runtime/token-budget.ts. */
-    | "skipped_no_budget";
+    | "skipped_no_budget"
+    /** Above the ICP's Google-review ceiling — already has the reputation this offer builds. */
+    | "too_many_reviews";
+  /** Present on `too_many_reviews`, so the log says how far over the line it was. */
+  reviewCount?: number;
   score?: number;
   tier?: string;
   companyId?: string;
@@ -76,6 +81,8 @@ export class DiscoverResearchQualifyPipeline {
        * Omitted (tests, demos) means no gating at all.
        */
       budget?: TokenBudget;
+      /** Overrides the ICP Google-review ceiling (tests). Defaults to MAX_GOOGLE_REVIEW_COUNT. */
+      maxGoogleReviewCount?: number;
     }
   ) {
     this.toolExecutor = new ToolExecutor({ tools: deps.tools, policy: deps.policy });
@@ -110,9 +117,30 @@ export class DiscoverResearchQualifyPipeline {
         }`
       );
     }
-    const candidates = searchResult.output as PlaceCandidate[];
+    const allCandidates = searchResult.output as PlaceCandidate[];
     const results: PipelineCompanyResult[] = [];
-    if (candidates.length === 0) return { found: 0, results };
+
+    // Deterministic ICP ceiling, applied before any LLM call so an
+    // out-of-ICP business costs zero Groq tokens. A company already holding
+    // hundreds of reviews has solved the problem this offer sells — see
+    // MAX_GOOGLE_REVIEW_COUNT. Candidates with no review count recorded are
+    // kept: unknown isn't the same as too many.
+    const reviewCeiling = this.deps.maxGoogleReviewCount ?? MAX_GOOGLE_REVIEW_COUNT;
+    const candidates: PlaceCandidate[] = [];
+    for (const candidate of allCandidates) {
+      if (candidate.userRatingCount !== null && candidate.userRatingCount > reviewCeiling) {
+        results.push({
+          placeId: candidate.placeId,
+          name: candidate.name,
+          outcome: "too_many_reviews",
+          reviewCount: candidate.userRatingCount,
+        });
+        continue;
+      }
+      candidates.push(candidate);
+    }
+
+    if (candidates.length === 0) return { found: allCandidates.length, results };
 
     const discoveryRun = await this.deps.runtime.run(prospectDiscoveryAgent, {
       area: input.area,
@@ -158,7 +186,9 @@ export class DiscoverResearchQualifyPipeline {
       }
     }
 
-    return { found: candidates.length, results };
+    // `found` counts what the search returned, not what survived the ICP
+    // ceiling — same meaning as the early return above.
+    return { found: allCandidates.length, results };
   }
 
   private async processCandidate(candidate: PlaceCandidate): Promise<PipelineCompanyResult> {
