@@ -21,8 +21,7 @@
     "cycle": "tsx src/cli/run-cycle.ts",
     "outreach:control": "tsx src/cli/outreach-control.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "diagnose-env": "tsx src/cli/diagnose-env.ts"
+    "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
