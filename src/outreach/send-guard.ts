@@ -16,7 +16,7 @@ export type SendGuardResult =
  *
  *   1. opt-out (permanent — never retry)
  *   2. the kill switch (Gavin's "stop this campaign" lever, SPEC.md §57)
- *   3. sending window (business hours, not 3am)
+ *   3. sending window (5am-11pm Winnipeg on weekdays — not 3am)
  *   4. warm-up rate limit across the 3 rotating accounts
  *
  * A `false` result with `permanent: false` means "not right now" — the

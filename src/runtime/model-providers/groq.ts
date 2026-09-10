@@ -102,6 +102,9 @@ export class GroqProvider implements ModelProvider {
           ...(opts.responseFormat ? { response_format: opts.responseFormat } : {}),
         });
       } catch (err) {
+        // A daily-budget 429 won't clear on any timescale worth blocking a
+        // cycle for — fail fast so the caller can record it and move on.
+        if (isRateLimitError(err) && isDailyTokenLimitError(err)) throw err;
         if (isRateLimitError(err) && attempt < this.maxRateLimitRetries) {
           await sleep(retryDelayMs(err));
           continue;
@@ -116,10 +119,32 @@ function isRateLimitError(err: unknown): err is { status: number; message?: stri
   return typeof err === "object" && err !== null && "status" in err && (err as { status: unknown }).status === 429;
 }
 
+/**
+ * True for a 429 against the *daily* token allowance (TPD) rather than the
+ * per-minute one (TPM). Groq words it as e.g. "Rate limit reached ... on
+ * tokens per day (TPD): Limit 200000, Used 198528".
+ *
+ * Worth distinguishing because the two want opposite handling: a TPM 429
+ * clears in seconds and should be waited out, while a TPD 429 means the
+ * day's budget is gone — retrying just burns the retry allowance and
+ * delays the caller for nothing.
+ */
+export function isDailyTokenLimitError(err: { message?: string }): boolean {
+  return /tokens per day|\bTPD\b/i.test(err.message ?? "");
+}
+
+/**
+ * Groq's suggested wait, in ms. The duration is a Go-style string, so it
+ * can carry hour/minute parts ("7m59.52s", "1h2m3s") — parsing only a
+ * bare `([\d.]+)s` silently missed those and fell back to the 5s default,
+ * which meant a 7-minute wait got retried 3 times over ~15 seconds and
+ * failed anyway (Gavin, 2026-09-10).
+ */
 function retryDelayMs(err: { message?: string }): number {
-  const match = err.message?.match(/try again in ([\d.]+)s/i);
-  const seconds = match ? Number(match[1]) : null;
-  return seconds && Number.isFinite(seconds) ? Math.ceil(seconds * 1000) + 250 : 5000;
+  const match = err.message?.match(/try again in (?:(\d+)h)?(?:(\d+)m)?(?:([\d.]+)s)?/i);
+  if (!match || (!match[1] && !match[2] && !match[3])) return 5000;
+  const seconds = Number(match[1] ?? 0) * 3600 + Number(match[2] ?? 0) * 60 + Number(match[3] ?? 0);
+  return Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds * 1000) + 250 : 5000;
 }
 
 function sleep(ms: number) {

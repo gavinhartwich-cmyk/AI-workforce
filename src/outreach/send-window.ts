@@ -15,8 +15,14 @@ export type SendWindowConfig = {
 export const DEFAULT_SEND_WINDOW: SendWindowConfig = {
   timezone: "America/Winnipeg",
   workingDays: [1, 2, 3, 4, 5],
-  startHour: 8,
-  endHour: 18,
+  startHour: 5,
+  // Exclusive: the last send goes out at 22:59, so nothing sends at or
+  // after 11pm. Widened from 8-18 to 5-23 (Gavin, 2026-09-10) — the
+  // window's job is to keep sends off the 3am graveyard shift that reads
+  // as bot behavior, not to mirror office hours, and a wider window gives
+  // the 25-minute send spacing more room to place a day's worth of sends
+  // without bunching them up.
+  endHour: 23,
 };
 
 export function isWithinSendingWindow(now: Date, config: SendWindowConfig = DEFAULT_SEND_WINDOW): boolean {

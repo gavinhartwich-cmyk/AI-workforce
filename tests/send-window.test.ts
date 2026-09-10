@@ -13,10 +13,24 @@ describe("isWithinSendingWindow", () => {
     expect(isWithinSendingWindow(new Date("2026-01-10T16:00:00Z"))).toBe(false);
   });
 
-  it("denies outside business hours on a weekday", () => {
-    // Wed 2026-01-07, 20:00 Winnipeg = 02:00 UTC on Jan 8 — still "Wed" locally? Use a clearly-late local hour instead.
-    // Tue 2026-01-06, 22:00 Winnipeg = 2026-01-07T04:00:00Z
-    expect(isWithinSendingWindow(new Date("2026-01-07T04:00:00Z"))).toBe(false);
+  it("denies the small hours on a weekday", () => {
+    // Wed 2026-01-07, 03:00 Winnipeg = 09:00 UTC — before the 5am open.
+    expect(isWithinSendingWindow(new Date("2026-01-07T09:00:00Z"))).toBe(false);
+  });
+
+  // Boundaries of the 5am-11pm window (Winnipeg is UTC-6 in January).
+  it("allows the 5am open and the last hour before 11pm", () => {
+    // Wed 2026-01-07, 05:00 Winnipeg = 11:00 UTC
+    expect(isWithinSendingWindow(new Date("2026-01-07T11:00:00Z"))).toBe(true);
+    // Wed 2026-01-07, 22:30 Winnipeg = 2026-01-08T04:30 UTC
+    expect(isWithinSendingWindow(new Date("2026-01-08T04:30:00Z"))).toBe(true);
+  });
+
+  it("denies 11pm onward", () => {
+    // Wed 2026-01-07, 23:00 Winnipeg = 2026-01-08T05:00 UTC — endHour is exclusive.
+    expect(isWithinSendingWindow(new Date("2026-01-08T05:00:00Z"))).toBe(false);
+    // Thu 2026-01-08, 04:00 Winnipeg = 10:00 UTC
+    expect(isWithinSendingWindow(new Date("2026-01-08T10:00:00Z"))).toBe(false);
   });
 
   it("respects a custom config", () => {
