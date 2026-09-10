@@ -273,3 +273,27 @@ export const outreachControl = pgTable("outreach_control", {
   pausedReason: text("paused_reason"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ---------------------------------------------------------------------------
+// groq_token_usage — how many Groq tokens the agents have spent today, so
+// they can stop before eating the whole free-tier daily allowance.
+//
+// Groq's free tier caps tokens per day per *organization* (200k), and the
+// Sales Manager chat in hartwich-os draws on that same pool. On 2026-09-10
+// the agents used 198,528 of it by mid-afternoon and the chat — the one
+// interactive, human-facing feature — couldn't answer a single message for
+// the rest of the day. Batch work starving the interactive feature is the
+// wrong tradeoff, so discovery now stops at its own budget (see
+// src/runtime/token-budget.ts) and leaves the remainder for the chat.
+//
+// One row per UTC day. UTC because that's the window Groq's own cap tracks,
+// which is what actually matters here — not Winnipeg's calendar day.
+// ---------------------------------------------------------------------------
+
+export const groqTokenUsage = pgTable("groq_token_usage", {
+  /** YYYY-MM-DD, UTC. */
+  usageDate: text("usage_date").primaryKey(),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

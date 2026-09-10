@@ -1,6 +1,6 @@
 import Groq from "groq-sdk";
 import type { z } from "zod";
-import type { ModelMessage, ModelProvider, ModelResponse, StructuredResponse } from "../types.js";
+import type { ModelMessage, ModelProvider, ModelResponse, ModelUsage, StructuredResponse } from "../types.js";
 
 /**
  * "Fast" lane provider (spec §36) — classification, extraction,
@@ -15,14 +15,38 @@ export class GroqProvider implements ModelProvider {
   private client: Groq;
   private model: string;
   private maxRateLimitRetries: number;
+  private onUsage?: (usage: ModelUsage) => void | Promise<void>;
 
-  constructor(opts?: { apiKey?: string; model?: string; maxRateLimitRetries?: number }) {
+  constructor(opts?: {
+    apiKey?: string;
+    model?: string;
+    maxRateLimitRetries?: number;
+    /**
+     * Called after every completed call with what it cost. Kept as a
+     * callback rather than writing to the database here so this provider
+     * stays infrastructure-free (and unit-testable) — the CLI entrypoints
+     * wire it to the token ledger. See src/runtime/token-budget.ts.
+     */
+    onUsage?: (usage: ModelUsage) => void | Promise<void>;
+  }) {
     // Matches hartwich-os's own groq.ts: construct safely even with no key
     // set yet (Groq's SDK throws at construction on `undefined`), fail the
     // call itself with a clean 401 instead.
     this.client = new Groq({ apiKey: opts?.apiKey ?? process.env.GROQ_API_KEY ?? "" });
     this.model = opts?.model ?? process.env.GROQ_MODEL ?? "openai/gpt-oss-120b";
     this.maxRateLimitRetries = opts?.maxRateLimitRetries ?? 3;
+    this.onUsage = opts?.onUsage;
+  }
+
+  private async reportUsage(usage: ModelUsage): Promise<void> {
+    if (!this.onUsage) return;
+    try {
+      await this.onUsage(usage);
+    } catch (err) {
+      // Losing a ledger write must never fail the actual agent call — the
+      // budget is a guardrail, not the work itself.
+      console.warn("  ⚠ Failed to record Groq token usage:", err instanceof Error ? err.message : err);
+    }
   }
 
   async generate(input: { messages: ModelMessage[]; maxTokens?: number }): Promise<ModelResponse> {
@@ -30,12 +54,14 @@ export class GroqProvider implements ModelProvider {
       messages: input.messages,
       maxTokens: input.maxTokens ?? 1024,
     });
+    const usage = {
+      inputTokens: response.usage?.prompt_tokens ?? 0,
+      outputTokens: response.usage?.completion_tokens ?? 0,
+    };
+    await this.reportUsage(usage);
     return {
       content: response.choices[0]?.message?.content ?? "",
-      usage: {
-        inputTokens: response.usage?.prompt_tokens ?? 0,
-        outputTokens: response.usage?.completion_tokens ?? 0,
-      },
+      usage,
       model: this.model,
     };
   }
@@ -56,6 +82,14 @@ export class GroqProvider implements ModelProvider {
       },
     });
 
+    const usage = {
+      inputTokens: response.usage?.prompt_tokens ?? 0,
+      outputTokens: response.usage?.completion_tokens ?? 0,
+    };
+    // Recorded before the parse/validation checks below: the tokens were
+    // spent whether or not the response turns out to be usable.
+    await this.reportUsage(usage);
+
     const content = response.choices[0]?.message?.content;
     if (!content) throw new Error("Groq returned no content");
 
@@ -71,14 +105,7 @@ export class GroqProvider implements ModelProvider {
       throw new Error(`Groq structured response failed schema validation: ${result.error.message}`);
     }
 
-    return {
-      parsed: result.data,
-      usage: {
-        inputTokens: response.usage?.prompt_tokens ?? 0,
-        outputTokens: response.usage?.completion_tokens ?? 0,
-      },
-      model: this.model,
-    };
+    return { parsed: result.data, usage, model: this.model };
   }
 
   // Groq's free/on-demand tier caps at 8000 tokens/minute — a 429 there

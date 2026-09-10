@@ -13,6 +13,7 @@ import {
   type QualificationConfig,
 } from "../qualification/scoring.js";
 import type { PlaceCandidate } from "../tools/search-google-places.js";
+import type { TokenBudget } from "../runtime/token-budget.js";
 
 /**
  * Phase 2's end-to-end pipeline (SPEC.md §55 Phase 2): Discovery → Research
@@ -39,7 +40,15 @@ export type DiscoverResearchQualifyInput = {
 export type PipelineCompanyResult = {
   placeId: string;
   name: string;
-  outcome: "qualified" | "needs_review" | "disqualified" | "filtered_out" | "duplicate" | "error";
+  outcome:
+    | "qualified"
+    | "needs_review"
+    | "disqualified"
+    | "filtered_out"
+    | "duplicate"
+    | "error"
+    /** Stopped short to leave Groq tokens for the Sales Manager chat — see src/runtime/token-budget.ts. */
+    | "skipped_no_budget";
   score?: number;
   tier?: string;
   companyId?: string;
@@ -61,13 +70,33 @@ export class DiscoverResearchQualifyPipeline {
       policy: PolicyEngine;
       audit: AuditSink;
       qualificationConfig?: QualificationConfig;
+      /**
+       * Stops the pipeline once the agents have spent their share of Groq's
+       * daily token allowance, leaving the rest for the Sales Manager chat.
+       * Omitted (tests, demos) means no gating at all.
+       */
+      budget?: TokenBudget;
     }
   ) {
     this.toolExecutor = new ToolExecutor({ tools: deps.tools, policy: deps.policy });
   }
 
+  /** True when the agents have spent their daily share and should stop. */
+  private async outOfBudget(): Promise<boolean> {
+    if (!this.deps.budget) return false;
+    const state = await this.deps.budget.state();
+    return state.exhausted;
+  }
+
   async run(input: DiscoverResearchQualifyInput): Promise<PipelineSummary> {
     const exclusions = input.exclusions ?? [];
+
+    // Checked before the Places call, not after: there's no point paying for
+    // a search whose results can't be researched or qualified today.
+    if (await this.outOfBudget()) {
+      console.log("  ⏸ Skipping discovery — daily Groq token budget spent, leaving the rest for the Sales Manager chat.");
+      return { found: 0, results: [] };
+    }
 
     const searchResult = await this.invokeTool("search_google_places", {
       area: input.area,
@@ -100,10 +129,20 @@ export class DiscoverResearchQualifyPipeline {
     }
     const keepMap = new Map(discoveryRun.output.decisions.map((d) => [d.placeId, d]));
 
+    let budgetSpent = false;
     for (const candidate of candidates) {
       const decision = keepMap.get(candidate.placeId);
       if (!decision || !decision.keep) {
         results.push({ placeId: candidate.placeId, name: candidate.name, outcome: "filtered_out" });
+        continue;
+      }
+
+      // Re-checked per candidate rather than once up front: each one costs a
+      // research + qualification call, so a long candidate list can cross the
+      // line partway through and should stop there rather than run it out.
+      if (budgetSpent || (await this.outOfBudget())) {
+        budgetSpent = true;
+        results.push({ placeId: candidate.placeId, name: candidate.name, outcome: "skipped_no_budget" });
         continue;
       }
 

@@ -27,6 +27,7 @@ import { randomUUID } from "node:crypto";
 import { AgentRuntime } from "../runtime/agent-runtime.js";
 import { ModelRouter } from "../runtime/model-router.js";
 import { GroqProvider } from "../runtime/model-providers/groq.js";
+import { PostgresTokenBudget } from "../runtime/token-budget.js";
 import { AnthropicProvider } from "../runtime/model-providers/anthropic.js";
 import { ToolRegistry } from "../runtime/tool-registry.js";
 import { DefaultPolicyEngine } from "../runtime/policy-engine.js";
@@ -86,11 +87,14 @@ async function main() {
 
   const policy = new DefaultPolicyEngine(DEFAULT_POLICY_RULES);
   const audit = new PostgresAuditSink();
-  const fast = new GroqProvider();
+  // Shares the agents' daily budget: an in-authority discovery_increase runs
+  // the same real discovery pipeline, so it has to respect the same ceiling.
+  const budget = new PostgresTokenBudget();
+  const fast = new GroqProvider({ onUsage: (usage) => budget.record(usage) });
   const strong = process.env.ANTHROPIC_API_KEY ? new AnthropicProvider() : fast;
   const runtime = new AgentRuntime({ modelRouter: new ModelRouter({ fast, strong }), tools, policy, audit });
 
-  const discovery = new DiscoverResearchQualifyPipeline({ runtime, tools, policy, audit });
+  const discovery = new DiscoverResearchQualifyPipeline({ runtime, tools, policy, audit, budget });
 
   const manager = new SalesManager({
     goals: new PostgresGoalStore(),
