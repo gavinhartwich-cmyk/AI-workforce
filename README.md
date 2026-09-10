@@ -514,6 +514,7 @@ npm run demo:execute-outreach # Phase 5 demo — autonomous send, guard checks a
 npm run demo:handle-replies   # Phase 6/7 demo — classify replies, autonomous reply + escalation with CRM note/task
 npm run demo:sales-analyst    # Phase 8 demo — funnel/business/efficiency/quality report for a period, against fixtures
 npm run demo:sales-manager    # Phase 9 demo — the manager plans, executes within authority, or escalates, per goal
+npm run cycle                 # THE REAL THING — one full cycle against real credentials, see "Running it for real" below
 ```
 
 Both demos use real Groq/Anthropic calls only if their API keys are set,
@@ -523,20 +524,43 @@ otherwise they fall back to canned `FakeModelProvider` responses.
 repo's own** schema (`src/db/schema.ts`) to `AGENT_DATABASE_URL` — never
 `hartwich-os`'s database.
 
+### Running it for real
+
+`src/cli/run-cycle.ts` (`npm run cycle`) is the actual deployment
+entrypoint — not a demo. It wires every pipeline to the real
+`Postgres*`/`Google*` implementations (not fixtures) and runs one full
+cycle in SPEC.md's own order: Prospect Discovery → Outreach Execution
+(every qualified-but-uncontacted lead, via the new
+`get_new_lead_candidates` tool) → Follow-Ups → Inbound Replies → the
+Sales Manager, last, since it depends on the KPI data every stage above
+just produced. Each stage is independently try/caught and logged, so one
+failing (e.g. an expired Gmail token) doesn't stop the others.
+
+Needs `AGENT_DATABASE_URL`, `HARTWICH_DATABASE_URL`, and `GROQ_API_KEY`
+at minimum (it exits with a clear error if any are missing); every other
+`.env.example` var is checked too, with a warning naming exactly which
+stage will fail without it, rather than a silent partial run.
+
+`.github/workflows/cron.yml` runs it hourly via `workflow_dispatch`/
+`schedule`, mirroring hartwich-os's own cron dispatch mechanism
+(GAP_ANALYSIS.md §2) rather than inventing a second scheduler. The
+guardrails that make hourly (or more frequent) runs safe — opt-out, the
+`outreach-control` kill switch, send-window, per-account warm-up caps —
+live inside the app itself (`src/outreach/*`), not in the schedule, so
+they hold regardless of cron frequency. Populate the workflow's required
+secrets (listed in its header comment, one per `.env.example` var) before
+enabling it.
+
 ## What's next
 
 `SPEC.md` §55's numbered roadmap (Phase 0-9) is now built end to end —
 `SPEC.md` §56's "V1 Definition of Done" ("Gavin creates a sales goal →
 walks away → Sales Manager creates a plan → agents execute routine
-work...") describes what this repo now does, not what's left. What
-remains is deliberately-deferred, honestly-flagged work rather than a new
-phase number:
+work...") describes what this repo now does, not what's left. Real
+deployment wiring (`npm run cycle` + `.github/workflows/cron.yml`, above)
+is done; what remains is deliberately-deferred, honestly-flagged work
+rather than a new phase number:
 
-- Real deployment wiring — a recurring schedule actually calling
-  `DiscoverResearchQualifyPipeline.run`, `SendFollowUpsPipeline.runAll`,
-  `HandleInboundRepliesPipeline.runAll`, and now `SalesManager.runAll` —
-  and pointing every store/reader at real `AGENT_DATABASE_URL`/
-  `HARTWICH_DATABASE_URL` credentials instead of a demo's fixtures.
 - Per-variant experiment outcome measurement and auto-stopping a failed
   one (`SPEC.md` §17/§34) — `src/experiments/assignment.ts`'s
   deterministic hash means no new assignment table is needed to measure
