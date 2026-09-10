@@ -93,6 +93,14 @@ export const researchAgent: AgentDefinition<ResearchInput, ResearchOutput> = {
   outputSchema: OutputSchema,
   autonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE,
   modelLane: "fast",
+  // The provider default (1024) was getting hit on real, larger websites —
+  // confirmed live via the AI Workforce dashboard's run history: Groq
+  // returned 400 json_validate_failed / "max completion tokens reached
+  // before generating a valid document" for a real candidate whose scraped
+  // page text ran long. This schema (a summary plus an evidenced signals
+  // array plus several contact fields) is naturally one of the larger
+  // outputs in this repo; give it real headroom instead of truncating.
+  maxOutputTokens: 2048,
   buildPrompt(input) {
     return {
       system: SYSTEM_PROMPT,

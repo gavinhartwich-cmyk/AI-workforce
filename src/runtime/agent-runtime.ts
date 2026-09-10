@@ -78,6 +78,7 @@ export class AgentRuntime {
         schemaName: `${agent.id}_output`,
         jsonSchema,
         zodSchema: agent.outputSchema as z.ZodType<unknown>,
+        maxTokens: agent.maxOutputTokens,
       });
 
       // 4. Schema Validation — structuredGenerate already validated against

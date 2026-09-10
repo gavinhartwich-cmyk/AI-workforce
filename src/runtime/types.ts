@@ -152,6 +152,12 @@ export interface AgentDefinition<TInput = unknown, TOutput = unknown> {
   readonly autonomyLevel: number;
   /** Which model lane this agent's reasoning step needs (spec §36). */
   readonly modelLane: ModelLane;
+  /** Output token budget for this agent's structured-generate call — falls
+   * back to the provider's own default (1024) when omitted. Raise this for
+   * an agent whose output schema is naturally large (e.g. a summary plus
+   * an array of evidenced signals) rather than one likely to hit the
+   * default and return a truncated/invalid document. */
+  readonly maxOutputTokens?: number;
   /** Builds the prompt for one run from validated input plus whatever
    * context the caller assembled (research, prior state, ...). Kept as a
    * pure function so it's trivially testable without a live model. */
