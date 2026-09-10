@@ -143,6 +143,7 @@ export class PostgresHartwichWriteStore implements HartwichWriteStore {
           addressLine: input.place.address,
           source: "google_places",
           sourceRefId: input.placeId,
+          aiWorkforceCreated: true,
           googleReviewCount: input.place.userRatingCount,
           googleRating: input.place.rating != null ? input.place.rating.toFixed(2) : null,
           isOwnerOperated: input.isOwnerOperated,

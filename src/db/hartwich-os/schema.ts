@@ -57,6 +57,11 @@ export const companies = pgTable("companies", {
   postalCode: text("postal_code"),
   source: companySourceEnum("source").notNull(),
   sourceRefId: text("source_ref_id"),
+  // True only for companies THIS repo's own pipeline created — distinct
+  // from `source: "google_places"`, which hartwich-os's own (human-
+  // triggered) lead mining also sets. See hartwich-os's schema.ts for the
+  // full explanation; every write here must set this explicitly true.
+  aiWorkforceCreated: boolean("ai_workforce_created").notNull().default(false),
   googleReviewCount: integer("google_review_count"),
   googleRating: numeric("google_rating", { precision: 3, scale: 2 }),
   isOwnerOperated: boolean("is_owner_operated"),

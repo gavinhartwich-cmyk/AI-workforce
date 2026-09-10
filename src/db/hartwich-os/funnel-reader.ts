@@ -42,7 +42,7 @@ export class PostgresFunnelReader implements FunnelReader {
     const [row] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(companies)
-      .where(between(companies.createdAt, period.start, period.end));
+      .where(and(eq(companies.aiWorkforceCreated, true), between(companies.createdAt, period.start, period.end)));
     return row?.count ?? 0;
   }
 
@@ -54,16 +54,31 @@ export class PostgresFunnelReader implements FunnelReader {
     const [row] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(companies)
-      .where(and(eq(companies.status, status), between(companies.createdAt, period.start, period.end)));
+      .where(
+        and(
+          eq(companies.status, status),
+          eq(companies.aiWorkforceCreated, true),
+          between(companies.createdAt, period.start, period.end)
+        )
+      );
     return row?.count ?? 0;
   }
+
+  // Every deals.* query below joins companies to filter by
+  // aiWorkforceCreated — a deal itself carries no origin marker, but every
+  // deal traces back to exactly one company, and that's where AI-vs-not is
+  // recorded (see hartwich-os's schema.ts). Manually-added leads (or leads
+  // from hartwich-os's own, human-triggered lead mining) must not count
+  // toward this repo's own goal/KPI tracking — see the Board's "AI" badge,
+  // same distinction, same source of truth.
 
   async countDealsCreated(period: Period): Promise<number> {
     const db = getHartwichOsDb();
     const [row] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(deals)
-      .where(between(deals.createdAt, period.start, period.end));
+      .innerJoin(companies, eq(deals.companyId, companies.id))
+      .where(and(eq(companies.aiWorkforceCreated, true), between(deals.createdAt, period.start, period.end)));
     return row?.count ?? 0;
   }
 
@@ -73,7 +88,14 @@ export class PostgresFunnelReader implements FunnelReader {
       .select({ count: sql<number>`count(*)::int` })
       .from(deals)
       .innerJoin(pipelineStages, eq(deals.stageId, pipelineStages.id))
-      .where(and(eq(pipelineStages.name, stageName), between(deals.stageEnteredAt, period.start, period.end)));
+      .innerJoin(companies, eq(deals.companyId, companies.id))
+      .where(
+        and(
+          eq(pipelineStages.name, stageName),
+          eq(companies.aiWorkforceCreated, true),
+          between(deals.stageEnteredAt, period.start, period.end)
+        )
+      );
     return row?.count ?? 0;
   }
 
@@ -83,7 +105,14 @@ export class PostgresFunnelReader implements FunnelReader {
       .select({ count: sql<number>`count(*)::int` })
       .from(deals)
       .innerJoin(pipelineStages, eq(deals.stageId, pipelineStages.id))
-      .where(and(eq(pipelineStages.isWon, true), between(deals.stageEnteredAt, period.start, period.end)));
+      .innerJoin(companies, eq(deals.companyId, companies.id))
+      .where(
+        and(
+          eq(pipelineStages.isWon, true),
+          eq(companies.aiWorkforceCreated, true),
+          between(deals.stageEnteredAt, period.start, period.end)
+        )
+      );
     return row?.count ?? 0;
   }
 
@@ -93,7 +122,14 @@ export class PostgresFunnelReader implements FunnelReader {
       .select({ sum: sql<string | null>`coalesce(sum(${deals.valueEstimate}), 0)` })
       .from(deals)
       .innerJoin(pipelineStages, eq(deals.stageId, pipelineStages.id))
-      .where(and(eq(pipelineStages.isWon, true), between(deals.stageEnteredAt, period.start, period.end)));
+      .innerJoin(companies, eq(deals.companyId, companies.id))
+      .where(
+        and(
+          eq(pipelineStages.isWon, true),
+          eq(companies.aiWorkforceCreated, true),
+          between(deals.stageEnteredAt, period.start, period.end)
+        )
+      );
     return row?.sum != null ? Number(row.sum) : 0;
   }
 
@@ -103,7 +139,14 @@ export class PostgresFunnelReader implements FunnelReader {
       .select({ count: sql<number>`count(*)::int` })
       .from(deals)
       .innerJoin(pipelineStages, eq(deals.stageId, pipelineStages.id))
-      .where(and(eq(pipelineStages.isLost, true), between(deals.stageEnteredAt, period.start, period.end)));
+      .innerJoin(companies, eq(deals.companyId, companies.id))
+      .where(
+        and(
+          eq(pipelineStages.isLost, true),
+          eq(companies.aiWorkforceCreated, true),
+          between(deals.stageEnteredAt, period.start, period.end)
+        )
+      );
     return row?.count ?? 0;
   }
 
