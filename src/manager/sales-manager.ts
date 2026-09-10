@@ -20,7 +20,7 @@ import type { AuthorityPolicy, InterventionCandidate, WorkIntensity } from "./ty
 import type { ExperimentStore } from "../experiments/experiment-store.js";
 import type { EscalationStore } from "./escalation-store.js";
 import type { DiscoverResearchQualifyInput, PipelineSummary } from "../pipelines/discover-research-qualify.js";
-import { currentDiscoveryTargets, BASE_DISCOVERY_VOLUME, type DiscoveryTarget } from "../config/icp-targets.js";
+import { currentDiscoveryTargets, AREAS_PER_CYCLE, BASE_DISCOVERY_VOLUME, type DiscoveryTarget } from "../config/icp-targets.js";
 
 /** A fixed, pre-approved copywriting variation — not LLM-invented copy, so it needs no per-run approval (SPEC.md §20's "approved... messaging rules"). */
 const DEFAULT_EXPERIMENT_TEST_DIRECTIVE =
@@ -220,17 +220,35 @@ export class SalesManager {
     };
   }
 
+  /**
+   * Scales discovery volume by searching MORE AREAS, not by asking for more
+   * results per area.
+   *
+   * BASE_DISCOVERY_VOLUME is already 20, which is exactly the hard cap
+   * search_google_places enforces on `maxResults` (Google's own page size).
+   * So the old approach — multiplying maxResults by the increase — produced
+   * 24 for a +20% and 40 for a +100%, and the tool rejected every one of
+   * them with "Too big: expected number to be <=20". That meant this
+   * capability had never actually worked: not the autonomous +20%, and not
+   * an increase Gavin had explicitly approved (2026-09-10). Areas are the
+   * axis that can actually grow.
+   */
   private async executeDiscoveryIncrease(
     candidate: InterventionCandidate
   ): Promise<Extract<ManagerCycleExecution, { kind: "discovery_increase" }>> {
-    const maxResults = Math.round(BASE_DISCOVERY_VOLUME * (1 + (candidate.proposedChangePercent ?? 0) / 100));
-    const targets = this.deps.discoveryTargets ?? currentDiscoveryTargets();
+    const multiplier = 1 + (candidate.proposedChangePercent ?? 0) / 100;
+    const areaCount = Math.max(1, Math.round(AREAS_PER_CYCLE * multiplier));
+    const targets = this.deps.discoveryTargets ?? currentDiscoveryTargets(new Date(), areaCount);
     const runs: { target: DiscoveryTarget; summary: PipelineSummary }[] = [];
     for (const target of targets) {
-      const summary = await this.deps.discovery.run({ area: target.area, keyword: target.keyword, maxResults });
+      const summary = await this.deps.discovery.run({
+        area: target.area,
+        keyword: target.keyword,
+        maxResults: BASE_DISCOVERY_VOLUME,
+      });
       runs.push({ target, summary });
     }
-    return { kind: "discovery_increase", maxResults, runs };
+    return { kind: "discovery_increase", maxResults: BASE_DISCOVERY_VOLUME, runs };
   }
 
   private async executeExperiment(
@@ -302,11 +320,16 @@ export class SalesManager {
     now: Date
   ): Promise<void> {
     if (this.deps.escalations) {
-      // One open ask at a time per goal+capability. Without this the manager
-      // re-raises the identical decision every cycle — 7 duplicate tasks and
-      // 7 emails in one afternoon on the 15-minute schedule (2026-09-10).
-      const alreadyWaiting = await this.deps.escalations.findPending(report.goal.id, candidate.capability ?? "unknown");
-      if (alreadyWaiting) return;
+      // One live ask at a time per goal+capability, plus a cooldown after it
+      // settles. Without the cooldown, approving one stopped it being
+      // "pending" and the next cycle immediately re-raised the same decision
+      // and re-emailed — so answering made the noise worse (2026-09-10).
+      const blocking = await this.deps.escalations.findBlocking(
+        report.goal.id,
+        candidate.capability ?? "unknown",
+        now
+      );
+      if (blocking) return;
 
       await this.deps.escalations.raise({
         goalId: report.goal.id,

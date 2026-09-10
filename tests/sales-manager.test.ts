@@ -20,10 +20,11 @@ import type { Experiment } from "../src/experiments/types.js";
 import type { DiscoverResearchQualifyInput, PipelineSummary } from "../src/pipelines/discover-research-qualify.js";
 import { BASE_DISCOVERY_VOLUME, type DiscoveryTarget } from "../src/config/icp-targets.js";
 import type { ManagerDecision, SalesGoal } from "../src/goals/types.js";
-import type {
-  EscalationStore,
-  ManagerEscalation,
-  NewManagerEscalation,
+import {
+  blocksReRaise,
+  type EscalationStore,
+  type ManagerEscalation,
+  type NewManagerEscalation,
 } from "../src/manager/escalation-store.js";
 
 process.env.GAVIN_EMAIL = "gavinhartwich@gmail.com";
@@ -192,9 +193,9 @@ class FakeEscalationStore implements EscalationStore {
     this.raised = [...preexisting];
   }
 
-  async findPending(goalId: string, capability: string) {
+  async findBlocking(goalId: string, capability: string, now: Date = new Date()) {
     return (
-      this.raised.find((e) => e.goalId === goalId && e.capability === capability && e.status === "pending") ?? null
+      this.raised.find((e) => e.goalId === goalId && e.capability === capability && blocksReRaise(e, now)) ?? null
     );
   }
   async listApproved() {
@@ -296,7 +297,7 @@ describe("SalesManager", () => {
     expect(result.intensity).toBe("BEHIND");
     expect(result.execution.kind).toBe("discovery_increase");
     expect(discovery.calls).toHaveLength(1);
-    expect(discovery.calls[0].maxResults).toBe(24); // BASE_DISCOVERY_VOLUME(20) * 1.2, intensity BEHIND -> +20%
+    expect(discovery.calls[0].maxResults).toBe(BASE_DISCOVERY_VOLUME); // capped at the tool's own max; volume grows via areas
     expect(gmailSender.sent).toHaveLength(0); // no escalation needed — this was in-authority
     expect(decisions.records[0].selectedAction).toMatch(/Increase Prospect Discovery volume/);
   });
@@ -375,8 +376,70 @@ describe("SalesManager", () => {
     // Ran at +100% — the very thing the authority cap refused on its own,
     // now allowed because a human said yes.
     expect(discovery.calls.length).toBeGreaterThan(0);
-    expect(discovery.calls[0].maxResults).toBe(BASE_DISCOVERY_VOLUME * 2);
+    expect(discovery.calls[0].maxResults).toBe(BASE_DISCOVERY_VOLUME);
     expect(escalations.raised.find((e) => e.id === "esc-approved")!.status).toBe("executed");
+  });
+
+  it("does not re-raise after Gavin decides — approving must not generate a new ask", async () => {
+    // The bug Gavin hit: suppression keyed only on "pending", so approving
+    // one made it non-pending and the next cycle raised an identical
+    // escalation and emailed him again. Answering made the noise worse.
+    const escalations = new FakeEscalationStore();
+    const { manager, gmailSender } = buildManager({
+      goals: [buildGoal({ target: 1000 })],
+      funnelCounts: { prospects: 100, qualified: 50, won: 0, wonValue: 0 },
+      escalations,
+    });
+
+    await manager.runCycle("goal-1", AS_OF);
+    expect(escalations.raised).toHaveLength(1);
+
+    // Gavin approves it.
+    Object.assign(escalations.raised[0], { status: "approved", decidedAt: AS_OF });
+    await manager.runCycle("goal-1", AS_OF);
+    expect(escalations.raised).toHaveLength(1);
+
+    // ...and it executes. Still no new ask, and still only the one email.
+    Object.assign(escalations.raised[0], { status: "executed", executedAt: AS_OF });
+    await manager.runCycle("goal-1", AS_OF);
+    expect(escalations.raised).toHaveLength(1);
+    expect(gmailSender.sent).toHaveLength(1);
+  });
+
+  it("re-raises only once the cooldown on a settled escalation has passed", async () => {
+    const escalations = new FakeEscalationStore();
+    const { manager } = buildManager({
+      goals: [buildGoal({ target: 1000 })],
+      funnelCounts: { prospects: 100, qualified: 50, won: 0, wonValue: 0 },
+      escalations,
+    });
+
+    await manager.runCycle("goal-1", AS_OF);
+    Object.assign(escalations.raised[0], { status: "executed", executedAt: AS_OF });
+
+    // 23 hours later — still inside the 24h executed cooldown.
+    await manager.runCycle("goal-1", new Date(AS_OF.getTime() + 23 * 60 * 60 * 1000));
+    expect(escalations.raised).toHaveLength(1);
+
+    // 25 hours later — the action had its chance and the bottleneck persists.
+    await manager.runCycle("goal-1", new Date(AS_OF.getTime() + 25 * 60 * 60 * 1000));
+    expect(escalations.raised).toHaveLength(2);
+  });
+
+  it("respects the long cooldown after a rejection", async () => {
+    const escalations = new FakeEscalationStore();
+    const { manager } = buildManager({
+      goals: [buildGoal({ target: 1000 })],
+      funnelCounts: { prospects: 100, qualified: 50, won: 0, wonValue: 0 },
+      escalations,
+    });
+
+    await manager.runCycle("goal-1", AS_OF);
+    Object.assign(escalations.raised[0], { status: "rejected", decidedAt: AS_OF });
+
+    // Two days after a "no" it must still not ask again.
+    await manager.runCycle("goal-1", new Date(AS_OF.getTime() + 2 * 24 * 60 * 60 * 1000));
+    expect(escalations.raised).toHaveLength(1);
   });
 
   it("marks an approved escalation failed when nothing can carry out that capability", async () => {

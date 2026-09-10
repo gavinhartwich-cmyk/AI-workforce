@@ -26,9 +26,28 @@ export type NewManagerEscalation = Omit<
   "id" | "status" | "executionNote" | "createdAt" | "decidedAt" | "executedAt"
 >;
 
+/**
+ * How long a *settled* escalation keeps suppressing a re-raise of the same
+ * goal+capability.
+ *
+ * Suppressing only while "pending" wasn't enough: the moment Gavin approved
+ * one it stopped being pending, so the very next cycle saw no open ask,
+ * re-raised the identical decision and emailed him again — approving
+ * actively generated more noise (2026-09-10). The bottleneck that triggers
+ * these takes time to move, so a settled decision has to keep the question
+ * closed for a while.
+ */
+export const EXECUTED_COOLDOWN_MS = 24 * 60 * 60 * 1000; // give the action a day to show an effect
+export const FAILED_COOLDOWN_MS = 6 * 60 * 60 * 1000; // don't hammer him while it's broken
+export const REJECTED_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // he said no — don't nag
+
 export interface EscalationStore {
-  /** The still-open escalation for this goal+capability, if one is already waiting. */
-  findPending(goalId: string, capability: string): Promise<ManagerEscalation | null>;
+  /**
+   * An existing escalation that should stop this goal+capability being
+   * raised again right now — either still open (pending/approved), or
+   * settled recently enough to be within its cooldown.
+   */
+  findBlocking(goalId: string, capability: string, now?: Date): Promise<ManagerEscalation | null>;
   /** Everything Gavin has approved but the manager hasn't carried out yet. */
   listApproved(): Promise<ManagerEscalation[]>;
   raise(escalation: NewManagerEscalation): Promise<ManagerEscalation>;
@@ -57,18 +76,32 @@ function toDomain(row: typeof managerEscalations.$inferSelect): ManagerEscalatio
   };
 }
 
+/** Whether an existing escalation still blocks re-raising the same question. */
+export function blocksReRaise(escalation: ManagerEscalation, now: Date): boolean {
+  // Still open — the ask is live either way.
+  if (escalation.status === "pending" || escalation.status === "approved") return true;
+
+  const cooldown =
+    escalation.status === "rejected"
+      ? REJECTED_COOLDOWN_MS
+      : escalation.status === "failed"
+        ? FAILED_COOLDOWN_MS
+        : EXECUTED_COOLDOWN_MS;
+  const settledAt = escalation.executedAt ?? escalation.decidedAt ?? escalation.createdAt;
+  return now.getTime() - settledAt.getTime() < cooldown;
+}
+
 export class PostgresEscalationStore implements EscalationStore {
-  async findPending(goalId: string, capability: string): Promise<ManagerEscalation | null> {
+  async findBlocking(goalId: string, capability: string, now: Date = new Date()): Promise<ManagerEscalation | null> {
     const db = getDb();
-    const row = await db.query.managerEscalations.findFirst({
-      where: and(
-        eq(managerEscalations.goalId, goalId),
-        eq(managerEscalations.capability, capability),
-        eq(managerEscalations.status, "pending")
-      ),
+    // Newest first: only the most recent settlement matters for the cooldown.
+    const rows = await db.query.managerEscalations.findMany({
+      where: and(eq(managerEscalations.goalId, goalId), eq(managerEscalations.capability, capability)),
       orderBy: desc(managerEscalations.createdAt),
+      limit: 5,
     });
-    return row ? toDomain(row) : null;
+    const blocking = rows.map(toDomain).find((e) => blocksReRaise(e, now));
+    return blocking ?? null;
   }
 
   async listApproved(): Promise<ManagerEscalation[]> {
