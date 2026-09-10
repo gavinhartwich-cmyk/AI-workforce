@@ -19,6 +19,7 @@
     "demo:sales-analyst": "tsx src/demo-sales-analyst.ts",
     "demo:sales-manager": "tsx src/demo-sales-manager.ts",
     "cycle": "tsx src/cli/run-cycle.ts",
+    "cycle:manager": "tsx src/cli/run-sales-manager.ts",
     "outreach:control": "tsx src/cli/outreach-control.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
