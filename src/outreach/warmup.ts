@@ -23,21 +23,63 @@ const WARMUP_RAMP: { fromDay: number; dailyLimit: number }[] = [
 
 const MIN_SEND_SPACING_MINUTES = 25;
 
-export function getWarmupPhase(startedAt: Date | null, now: Date = new Date()): { daysSinceStart: number; dailyLimit: number } {
-  if (!startedAt) return { daysSinceStart: 0, dailyLimit: WARMUP_RAMP[0].dailyLimit };
+const WINNIPEG_TIMEZONE = "America/Winnipeg";
 
-  const daysSinceStart = Math.floor((now.getTime() - startedAt.getTime()) / (1000 * 60 * 60 * 24));
+/**
+ * Midnight (Winnipeg local) on whatever Winnipeg date `at` falls on, as a
+ * real UTC instant. Mirrors hartwich-os's getTodayMidnightWinnipeg — both
+ * repos must agree on where a "sending day" starts or they'd advance the
+ * shared ramp counter at different moments.
+ */
+function todayMidnightWinnipeg(at: Date): Date {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: WINNIPEG_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(at);
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  const utcMidnightCandidate = Date.UTC(get("year"), get("month") - 1, get("day"), 0, 0, 0);
+
+  const offsetParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: WINNIPEG_TIMEZONE,
+    timeZoneName: "shortOffset",
+  }).formatToParts(new Date(utcMidnightCandidate));
+  const raw = offsetParts.find((p) => p.type === "timeZoneName")?.value ?? "GMT+0";
+  const match = raw.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/);
+  const offsetMinutes = match
+    ? (match[1] === "-" ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3] ?? 0))
+    : 0;
+  return new Date(utcMidnightCandidate - offsetMinutes * 60_000);
+}
+
+/** Whether a send at `at` is this mailbox's first of that Winnipeg day. */
+export function startsNewSendDay(lastSentAt: Date | null, at: Date = new Date()): boolean {
+  if (!lastSentAt) return true;
+  return lastSentAt.getTime() < todayMidnightWinnipeg(at).getTime();
+}
+
+/**
+ * Ramp position by *sending* days rather than elapsed calendar days — an
+ * idle mailbox builds no reputation, so it must not graduate to a higher
+ * cap. `activeSendDays` counts today once it has sent, so the tier keys off
+ * days completed before today.
+ */
+export function getWarmupPhase(activeSendDays: number): { activeSendDays: number; dailyLimit: number } {
+  const days = Math.max(0, activeSendDays);
+  const completedDays = Math.max(0, days - 1);
+
   let dailyLimit = WARMUP_RAMP[0].dailyLimit;
   for (const tier of WARMUP_RAMP) {
-    if (daysSinceStart >= tier.fromDay) dailyLimit = tier.dailyLimit;
+    if (completedDays >= tier.fromDay) dailyLimit = tier.dailyLimit;
   }
-  return { daysSinceStart, dailyLimit };
+  return { activeSendDays: days, dailyLimit };
 }
 
 export type SendPermission = { allowed: true } | { allowed: false; reason: string };
 
 export function canSendEmail(
-  state: { warmupStartedAt: Date | null; dailySendCount: number; lastSentAt: Date | null },
+  state: { activeSendDays: number; dailySendCount: number; lastSentAt: Date | null },
   now: Date = new Date()
 ): SendPermission {
   if (state.lastSentAt) {
@@ -50,7 +92,10 @@ export function canSendEmail(
     }
   }
 
-  const { dailyLimit } = getWarmupPhase(state.warmupStartedAt, now);
+  // A mailbox that hasn't sent today is about to start a new sending day, so
+  // hold it to that upcoming day's cap rather than the finished one's.
+  const effectiveDays = state.activeSendDays + (startsNewSendDay(state.lastSentAt, now) ? 1 : 0);
+  const { dailyLimit } = getWarmupPhase(effectiveDays);
   if (state.dailySendCount >= dailyLimit) {
     return { allowed: false, reason: `Daily limit reached (${dailyLimit}/day). Sent ${state.dailySendCount} today.` };
   }

@@ -67,7 +67,7 @@ class FakeControlStore implements OutreachControlStore {
 
 class FakeAccountsStore implements EmailAccountsStore {
   async getState(accountIndex: 0 | 1 | 2): Promise<EmailAccountState> {
-    return { accountIndex, warmupStartedAt: null, dailySendCount: 0, lastSentAt: null };
+    return { accountIndex, warmupStartedAt: null, activeSendDays: 0, dailySendCount: 0, lastSentAt: null };
   }
   async recordSend() {}
 }

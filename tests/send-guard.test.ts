@@ -26,15 +26,15 @@ class FakeControlStore implements OutreachControlStore {
 class FakeAccountsStore implements EmailAccountsStore {
   constructor(private states: Record<number, EmailAccountState>) {}
   async getState(accountIndex: 0 | 1 | 2) {
-    return this.states[accountIndex] ?? { accountIndex, warmupStartedAt: null, dailySendCount: 0, lastSentAt: null };
+    return this.states[accountIndex] ?? { accountIndex, warmupStartedAt: null, activeSendDays: 0, dailySendCount: 0, lastSentAt: null };
   }
   async recordSend() {}
 }
 
 const availableAccounts = new FakeAccountsStore({
-  0: { accountIndex: 0, warmupStartedAt: null, dailySendCount: 0, lastSentAt: null },
-  1: { accountIndex: 1, warmupStartedAt: null, dailySendCount: 0, lastSentAt: null },
-  2: { accountIndex: 2, warmupStartedAt: null, dailySendCount: 0, lastSentAt: null },
+  0: { accountIndex: 0, warmupStartedAt: null, activeSendDays: 0, dailySendCount: 0, lastSentAt: null },
+  1: { accountIndex: 1, warmupStartedAt: null, activeSendDays: 0, dailySendCount: 0, lastSentAt: null },
+  2: { accountIndex: 2, warmupStartedAt: null, activeSendDays: 0, dailySendCount: 0, lastSentAt: null },
 });
 
 describe("checkSendAllowed", () => {
@@ -91,9 +91,9 @@ describe("checkSendAllowed", () => {
 
   it("defers when every account is over its warm-up limit", async () => {
     const maxedOut = new FakeAccountsStore({
-      0: { accountIndex: 0, warmupStartedAt: null, dailySendCount: 3, lastSentAt: null },
-      1: { accountIndex: 1, warmupStartedAt: null, dailySendCount: 3, lastSentAt: null },
-      2: { accountIndex: 2, warmupStartedAt: null, dailySendCount: 3, lastSentAt: null },
+      0: { accountIndex: 0, warmupStartedAt: null, activeSendDays: 0, dailySendCount: 3, lastSentAt: null },
+      1: { accountIndex: 1, warmupStartedAt: null, activeSendDays: 0, dailySendCount: 3, lastSentAt: null },
+      2: { accountIndex: 2, warmupStartedAt: null, activeSendDays: 0, dailySendCount: 3, lastSentAt: null },
     });
     const result = await checkSendAllowed(
       { optOuts: new FakeOptOutStore(), control: new FakeControlStore(), accounts: maxedOut },

@@ -156,6 +156,14 @@ export const emailSendAccounts = pgTable("email_send_accounts", {
   dailySendCount: integer("daily_send_count").notNull().default(0),
   lastSendResetAt: timestamp("last_send_reset_at", { withTimezone: true }),
   lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
+  /**
+   * Distinct days this mailbox has actually sent on (Winnipeg calendar) —
+   * what the warm-up ramp keys off, instead of elapsed calendar time, so an
+   * idle mailbox doesn't graduate to a higher cap without having earned the
+   * reputation. Owned by hartwich-os; mirrored here because this repo sends
+   * from the same three mailboxes and so has to advance the same counter.
+   */
+  activeSendDays: integer("active_send_days").notNull().default(0),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
