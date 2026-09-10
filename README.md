@@ -502,7 +502,9 @@ exact format instead. No credentials needed.
 
 ```bash
 npm install
-cp .env.example .env.local   # optional for the demo/tests — see below
+cp .env.example .env   # optional for the demo/tests — see below. Must be .env, not .env.local:
+                        # every entrypoint does `import "dotenv/config"`, which only auto-loads
+                        # .env (the .env.local convention is Next.js-specific, not general Node/tsx).
 
 npm run typecheck
 npm test                      # no network, no credentials needed
