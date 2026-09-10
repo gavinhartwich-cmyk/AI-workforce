@@ -18,8 +18,13 @@ import type { ManagerDecisionStore } from "../src/goals/manager-decision-store.j
 import type { ExperimentStore, CreateExperimentInput } from "../src/experiments/experiment-store.js";
 import type { Experiment } from "../src/experiments/types.js";
 import type { DiscoverResearchQualifyInput, PipelineSummary } from "../src/pipelines/discover-research-qualify.js";
-import type { DiscoveryTarget } from "../src/config/icp-targets.js";
+import { BASE_DISCOVERY_VOLUME, type DiscoveryTarget } from "../src/config/icp-targets.js";
 import type { ManagerDecision, SalesGoal } from "../src/goals/types.js";
+import type {
+  EscalationStore,
+  ManagerEscalation,
+  NewManagerEscalation,
+} from "../src/manager/escalation-store.js";
 
 process.env.GAVIN_EMAIL = "gavinhartwich@gmail.com";
 
@@ -178,6 +183,46 @@ class FakeWriteStore extends NotImplementedWriteStore {
   }
 }
 
+/** In-memory EscalationStore so the dedup/approval paths are testable without Postgres. */
+class FakeEscalationStore implements EscalationStore {
+  raised: ManagerEscalation[] = [];
+  private seq = 0;
+
+  constructor(private preexisting: ManagerEscalation[] = []) {
+    this.raised = [...preexisting];
+  }
+
+  async findPending(goalId: string, capability: string) {
+    return (
+      this.raised.find((e) => e.goalId === goalId && e.capability === capability && e.status === "pending") ?? null
+    );
+  }
+  async listApproved() {
+    return this.raised.filter((e) => e.status === "approved");
+  }
+  async raise(escalation: NewManagerEscalation): Promise<ManagerEscalation> {
+    const row: ManagerEscalation = {
+      ...escalation,
+      id: `esc-${++this.seq}`,
+      status: "pending",
+      executionNote: null,
+      createdAt: new Date(),
+      decidedAt: null,
+      executedAt: null,
+    };
+    this.raised.push(row);
+    return row;
+  }
+  async markExecuted(id: string, note: string | null, at: Date) {
+    const row = this.raised.find((e) => e.id === id);
+    if (row) Object.assign(row, { status: "executed", executionNote: note, executedAt: at });
+  }
+  async markFailed(id: string, note: string, at: Date) {
+    const row = this.raised.find((e) => e.id === id);
+    if (row) Object.assign(row, { status: "failed", executionNote: note, executedAt: at });
+  }
+}
+
 function buildManager(opts: {
   goals: SalesGoal[];
   funnelCounts?: FunnelCounts;
@@ -187,6 +232,7 @@ function buildManager(opts: {
    * North-America target list (src/config/icp-targets.ts) — that's
    * business config, not something a unit test should be coupled to. */
   discoveryTargets?: DiscoveryTarget[];
+  escalations?: FakeEscalationStore;
 }) {
   const decisions = new RecordingManagerDecisionStore();
   const experiments = opts.experiments ?? new FakeExperimentStore();
@@ -208,13 +254,14 @@ function buildManager(opts: {
     forecasts: new NoopForecastStore(),
     decisions,
     experiments,
+    escalations: opts.escalations,
     discovery,
     tools,
     policy,
     discoveryTargets: opts.discoveryTargets ?? [{ area: "Winnipeg, MB", keyword: "HVAC contractor" }],
   });
 
-  return { manager, decisions, experiments, discovery, gmailSender, writeStore };
+  return { manager, decisions, experiments, discovery, gmailSender, writeStore, escalations: opts.escalations };
 }
 
 describe("SalesManager", () => {
@@ -271,6 +318,92 @@ describe("SalesManager", () => {
     expect(writeStore.tasksCreated).toHaveLength(1);
     expect(decisions.records[0].options).toHaveLength(2);
     expect(decisions.records[0].options[1].action).toBe("Escalate to Gavin");
+  });
+
+  it("raises one escalation and does not duplicate it on later cycles", async () => {
+    // The bug this fixes: with no record of an open ask, every cycle
+    // re-diagnosed the same bottleneck and filed another task + email —
+    // 7 identical ones in one afternoon on the 15-minute schedule.
+    const escalations = new FakeEscalationStore();
+    const { manager, gmailSender, writeStore } = buildManager({
+      goals: [buildGoal({ target: 1000 })],
+      funnelCounts: { prospects: 100, qualified: 50, won: 0, wonValue: 0 },
+      escalations,
+    });
+
+    await manager.runCycle("goal-1", AS_OF);
+    await manager.runCycle("goal-1", AS_OF);
+    await manager.runCycle("goal-1", AS_OF);
+
+    expect(escalations.raised).toHaveLength(1);
+    expect(escalations.raised[0].status).toBe("pending");
+    expect(escalations.raised[0].capability).toBe("discover_prospects");
+    expect(escalations.raised[0].proposedChangePercent).toBe(100);
+    // The noisy side effects are suppressed along with the duplicate.
+    expect(gmailSender.sent).toHaveLength(1);
+    expect(writeStore.tasksCreated).toHaveLength(1);
+  });
+
+  it("carries out an approved escalation at the percentage Gavin approved", async () => {
+    const approved: ManagerEscalation = {
+      id: "esc-approved",
+      goalId: "goal-1",
+      capability: "discover_prospects",
+      proposedChangePercent: 100,
+      action: "Increase Prospect Discovery volume by 100%.",
+      diagnosis: "d",
+      whyApprovalRequired: "Exceeds the 20% autonomous cap.",
+      expectedImpact: 0.01,
+      risk: 0.3,
+      status: "approved",
+      executionNote: null,
+      createdAt: AS_OF,
+      decidedAt: AS_OF,
+      executedAt: null,
+    };
+    const escalations = new FakeEscalationStore([approved]);
+    const discovery = new FakeDiscoveryPipeline();
+    const { manager } = buildManager({
+      goals: [buildGoal({ target: 1000 })],
+      funnelCounts: { prospects: 100, qualified: 50, won: 0, wonValue: 0 },
+      discovery,
+      escalations,
+    });
+
+    await manager.runAll(AS_OF);
+
+    // Ran at +100% — the very thing the authority cap refused on its own,
+    // now allowed because a human said yes.
+    expect(discovery.calls.length).toBeGreaterThan(0);
+    expect(discovery.calls[0].maxResults).toBe(BASE_DISCOVERY_VOLUME * 2);
+    expect(escalations.raised.find((e) => e.id === "esc-approved")!.status).toBe("executed");
+  });
+
+  it("marks an approved escalation failed when nothing can carry out that capability", async () => {
+    const approved: ManagerEscalation = {
+      id: "esc-odd",
+      goalId: "goal-1",
+      capability: "rewrite_the_offer",
+      proposedChangePercent: null,
+      action: "Rewrite the offer.",
+      diagnosis: "d",
+      whyApprovalRequired: "No policy covers it.",
+      expectedImpact: null,
+      risk: null,
+      status: "approved",
+      executionNote: null,
+      createdAt: AS_OF,
+      decidedAt: AS_OF,
+      executedAt: null,
+    };
+    const escalations = new FakeEscalationStore([approved]);
+    const { manager } = buildManager({ goals: [buildGoal({ target: 1 })], escalations });
+
+    await manager.runAll(AS_OF);
+
+    const row = escalations.raised.find((e) => e.id === "esc-odd")!;
+    expect(row.status).toBe("failed");
+    expect(row.executionNote).toMatch(/No executor wired/);
   });
 
   it("starts a controlled experiment for a downstream conversion bottleneck", async () => {

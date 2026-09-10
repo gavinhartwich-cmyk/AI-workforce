@@ -290,6 +290,58 @@ export const outreachControl = pgTable("outreach_control", {
 // which is what actually matters here — not Winnipeg's calendar day.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// manager_escalations — decisions the Sales Manager wants to make but isn't
+// allowed to make alone (src/manager/authority-policy.ts), held until Gavin
+// approves or rejects them on hartwich-os's /ai-workforce page.
+//
+// Before this existed, escalating only emailed Gavin and created a task —
+// both of which are just *text describing* a recommendation, with nothing
+// that could carry it out if he agreed. So the manager could never actually
+// get a yes: every cycle it re-diagnosed the same bottleneck, re-escalated,
+// and filed another duplicate task (7 identical ones on 2026-09-10 alone,
+// one per 15-minute cycle). This table is what makes an approval mean
+// something, and what lets a still-pending escalation suppress a duplicate.
+//
+// Owned here rather than in hartwich-os because the manager is what raises
+// and executes these; hartwich-os only reads them and sets status (the same
+// narrow-write exception it already uses for the outreach kill switch).
+// ---------------------------------------------------------------------------
+
+export const escalationStatusEnum = pgEnum("escalation_status", [
+  "pending",
+  "approved",
+  "rejected",
+  "executed",
+  "failed",
+]);
+
+export const managerEscalations = pgTable("manager_escalations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  goalId: uuid("goal_id")
+    .notNull()
+    .references(() => salesGoals.id, { onDelete: "cascade" }),
+  /** The capability the manager wants to exercise, e.g. "discover_prospects". */
+  capability: text("capability").notNull(),
+  /** How much it wants to change it by — the number that exceeded its authority. */
+  proposedChangePercent: integer("proposed_change_percent"),
+  action: text("action").notNull(),
+  diagnosis: text("diagnosis").notNull(),
+  whyApprovalRequired: text("why_approval_required").notNull(),
+  expectedImpact: numeric("expected_impact"),
+  risk: numeric("risk"),
+  status: escalationStatusEnum("status").notNull().default("pending"),
+  /** Set when execution is attempted after approval — why it failed, if it did. */
+  executionNote: text("execution_note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  executedAt: timestamp("executed_at", { withTimezone: true }),
+});
+
+export const managerEscalationsRelations = relations(managerEscalations, ({ one }) => ({
+  goal: one(salesGoals, { fields: [managerEscalations.goalId], references: [salesGoals.id] }),
+}));
+
 export const groqTokenUsage = pgTable("groq_token_usage", {
   /** YYYY-MM-DD, UTC. */
   usageDate: text("usage_date").primaryKey(),

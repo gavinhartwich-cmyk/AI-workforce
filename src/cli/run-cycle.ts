@@ -64,6 +64,7 @@ import { PostgresGoalStore } from "../goals/goal-store.js";
 import { PostgresKpiSnapshotStore } from "../goals/kpi-snapshot-store.js";
 import { PostgresForecastStore } from "../goals/forecast-store.js";
 import { PostgresManagerDecisionStore } from "../goals/manager-decision-store.js";
+import { PostgresEscalationStore } from "../manager/escalation-store.js";
 import { PostgresExperimentStore } from "../experiments/experiment-store.js";
 import { PostgresFunnelReader } from "../db/hartwich-os/funnel-reader.js";
 import { PostgresAgentHealthReader } from "../db/agent-health-reader.js";
@@ -194,6 +195,7 @@ async function main() {
       kpiSnapshots: new PostgresKpiSnapshotStore(),
       forecasts: new PostgresForecastStore(),
       decisions: new PostgresManagerDecisionStore(),
+    escalations: new PostgresEscalationStore(),
       experiments: new PostgresExperimentStore(),
       discovery,
       tools,

@@ -18,6 +18,7 @@ import { generateInterventionOptions } from "./intervention-generator.js";
 import { checkAuthority, DEFAULT_AUTHORITY_POLICIES } from "./authority-policy.js";
 import type { AuthorityPolicy, InterventionCandidate, WorkIntensity } from "./types.js";
 import type { ExperimentStore } from "../experiments/experiment-store.js";
+import type { EscalationStore } from "./escalation-store.js";
 import type { DiscoverResearchQualifyInput, PipelineSummary } from "../pipelines/discover-research-qualify.js";
 import { currentDiscoveryTargets, BASE_DISCOVERY_VOLUME, type DiscoveryTarget } from "../config/icp-targets.js";
 
@@ -97,6 +98,12 @@ export class SalesManager {
       forecasts: ForecastStore;
       decisions: ManagerDecisionStore;
       experiments: ExperimentStore;
+      /**
+       * Holds decisions that exceed the manager's own authority until Gavin
+       * approves them on /ai-workforce. Omitted (tests, demos) keeps the old
+       * notify-and-file-a-task behaviour with no dedup.
+       */
+      escalations?: EscalationStore;
       discovery: { run(input: DiscoverResearchQualifyInput): Promise<PipelineSummary> };
       tools: ToolRegistry;
       policy: PolicyEngine;
@@ -110,6 +117,7 @@ export class SalesManager {
   }
 
   async runAll(now: Date = new Date()): Promise<ManagerCycleResult[]> {
+    await this.executeApprovedEscalations(now);
     const goals = await this.deps.goals.listActive();
     const results: ManagerCycleResult[] = [];
     for (const goal of goals) results.push(await this.runCycle(goal.id, now));
@@ -246,12 +254,72 @@ export class SalesManager {
     return { kind: "experiment_created", experimentId: experiment.id, name };
   }
 
+  /**
+   * Carries out whatever Gavin has already approved on /ai-workforce, before
+   * this cycle diagnoses anything new — an approval that sat unexecuted would
+   * just get re-escalated below as if he'd never answered.
+   */
+  private async executeApprovedEscalations(now: Date): Promise<void> {
+    if (!this.deps.escalations) return;
+
+    for (const escalation of await this.deps.escalations.listApproved()) {
+      if (escalation.capability !== "discover_prospects") {
+        await this.deps.escalations.markFailed(
+          escalation.id,
+          `No executor wired for capability "${escalation.capability}" — approved but cannot be carried out automatically.`,
+          now
+        );
+        continue;
+      }
+
+      try {
+        // Gavin's approval IS the authority here, so this deliberately runs
+        // at the proposed percentage the policy cap would otherwise refuse.
+        const execution = await this.executeDiscoveryIncrease({
+          action: escalation.action,
+          capability: escalation.capability,
+          proposedChangePercent: escalation.proposedChangePercent ?? 0,
+          expectedImpact: escalation.expectedImpact ?? 0,
+          confidence: 0,
+          risk: escalation.risk ?? 0,
+        });
+        const found = execution.runs.reduce((sum, r) => sum + r.summary.found, 0);
+        await this.deps.escalations.markExecuted(
+          escalation.id,
+          `Ran discovery at ${execution.maxResults} results per area across ${execution.runs.length} area(s); ${found} candidate(s) found.`,
+          now
+        );
+      } catch (err) {
+        await this.deps.escalations.markFailed(escalation.id, err instanceof Error ? err.message : String(err), now);
+      }
+    }
+  }
+
   private async escalate(
     report: Awaited<ReturnType<typeof getGoalStatusReport>>,
     candidate: InterventionCandidate,
     whyApprovalRequired: string,
     now: Date
   ): Promise<void> {
+    if (this.deps.escalations) {
+      // One open ask at a time per goal+capability. Without this the manager
+      // re-raises the identical decision every cycle — 7 duplicate tasks and
+      // 7 emails in one afternoon on the 15-minute schedule (2026-09-10).
+      const alreadyWaiting = await this.deps.escalations.findPending(report.goal.id, candidate.capability ?? "unknown");
+      if (alreadyWaiting) return;
+
+      await this.deps.escalations.raise({
+        goalId: report.goal.id,
+        capability: candidate.capability ?? "unknown",
+        proposedChangePercent: candidate.proposedChangePercent ?? null,
+        action: candidate.action,
+        diagnosis: report.bottleneck.diagnosis,
+        whyApprovalRequired,
+        expectedImpact: candidate.expectedImpact,
+        risk: candidate.risk,
+      });
+    }
+
     // SPEC.md §37's exact escalation format — context and a recommendation, not raw agent confusion.
     const body = [
       "GAVIN — DECISION REQUIRED",
@@ -262,6 +330,8 @@ export class SalesManager {
       `EXPECTED IMPACT: +${candidate.expectedImpact} ${report.goal.metric}`,
       `RISK: ${formatRiskLabel(candidate.risk)}`,
       `WHY APPROVAL IS REQUIRED: ${whyApprovalRequired}`,
+      "",
+      "Approve or reject this on the AI Workforce page in Hartwich OS.",
     ].join("\n");
 
     await this.invokeBestEffort("notify_gavin", { subject: `Goal "${report.goal.metric}" needs a decision`, body });
