@@ -193,9 +193,9 @@ class FakeEscalationStore implements EscalationStore {
     this.raised = [...preexisting];
   }
 
-  async findBlocking(goalId: string, capability: string, now: Date = new Date()) {
+  async findBlocking(goalId: string, capability: string, now: Date = new Date(), currentForecastStatus?: string | null) {
     return (
-      this.raised.find((e) => e.goalId === goalId && e.capability === capability && blocksReRaise(e, now)) ?? null
+      this.raised.find((e) => e.goalId === goalId && e.capability === capability && blocksReRaise(e, now, currentForecastStatus)) ?? null
     );
   }
   async listApproved() {
@@ -354,6 +354,7 @@ describe("SalesManager", () => {
       action: "Increase Prospect Discovery volume by 100%.",
       diagnosis: "d",
       whyApprovalRequired: "Exceeds the 20% autonomous cap.",
+      forecastStatus: "CRITICAL",
       expectedImpact: 0.01,
       risk: 0.3,
       status: "approved",
@@ -426,7 +427,7 @@ describe("SalesManager", () => {
     expect(escalations.raised).toHaveLength(2);
   });
 
-  it("respects the long cooldown after a rejection", async () => {
+  it("stays quiet for 48h after a rejection, then may ask again", async () => {
     const escalations = new FakeEscalationStore();
     const { manager } = buildManager({
       goals: [buildGoal({ target: 1000 })],
@@ -437,9 +438,50 @@ describe("SalesManager", () => {
     await manager.runCycle("goal-1", AS_OF);
     Object.assign(escalations.raised[0], { status: "rejected", decidedAt: AS_OF });
 
-    // Two days after a "no" it must still not ask again.
-    await manager.runCycle("goal-1", new Date(AS_OF.getTime() + 2 * 24 * 60 * 60 * 1000));
+    // A day after a "no", it must not ask again.
+    await manager.runCycle("goal-1", new Date(AS_OF.getTime() + 24 * 60 * 60 * 1000));
     expect(escalations.raised).toHaveLength(1);
+
+    // Past 48h the answer is stale enough that re-asking is reasonable —
+    // a rejection means "not under these conditions", not "never again".
+    await manager.runCycle("goal-1", new Date(AS_OF.getTime() + 49 * 60 * 60 * 1000));
+    expect(escalations.raised).toHaveLength(2);
+  });
+
+  it("re-asks inside the cooldown if the goal got materially worse", async () => {
+    // The escape hatch: a timer is only a proxy for "have conditions
+    // changed". A rejection shouldn't mute a question while the goal falls
+    // off a cliff, so a worse forecast cuts the cooldown short.
+    const rejected: ManagerEscalation = {
+      id: "esc-rejected",
+      goalId: "goal-1",
+      capability: "discover_prospects",
+      proposedChangePercent: 100,
+      action: "Increase Prospect Discovery volume by 100%.",
+      diagnosis: "d",
+      whyApprovalRequired: "Exceeds the 20% autonomous cap.",
+      forecastStatus: "BEHIND",
+      expectedImpact: 0.01,
+      risk: 0.3,
+      status: "rejected",
+      executionNote: null,
+      createdAt: AS_OF,
+      decidedAt: AS_OF,
+      executedAt: null,
+    };
+    const escalations = new FakeEscalationStore([rejected]);
+    const { manager } = buildManager({
+      // Funnel bad enough that the forecast comes out CRITICAL — worse than
+      // the BEHIND recorded when Gavin said no.
+      goals: [buildGoal({ target: 1000 })],
+      funnelCounts: { prospects: 100, qualified: 50, won: 0, wonValue: 0 },
+      escalations,
+    });
+
+    // Only an hour later — deep inside the 48h cooldown.
+    const result = await manager.runCycle("goal-1", new Date(AS_OF.getTime() + 60 * 60 * 1000));
+    expect(result.status).toBe("CRITICAL");
+    expect(escalations.raised).toHaveLength(2);
   });
 
   it("marks an approved escalation failed when nothing can carry out that capability", async () => {
@@ -451,6 +493,7 @@ describe("SalesManager", () => {
       action: "Rewrite the offer.",
       diagnosis: "d",
       whyApprovalRequired: "No policy covers it.",
+      forecastStatus: "CRITICAL",
       expectedImpact: null,
       risk: null,
       status: "approved",

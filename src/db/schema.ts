@@ -328,6 +328,13 @@ export const managerEscalations = pgTable("manager_escalations", {
   action: text("action").notNull(),
   diagnosis: text("diagnosis").notNull(),
   whyApprovalRequired: text("why_approval_required").notNull(),
+  /**
+   * The goal's forecast status when this was raised. Kept so a settled
+   * escalation's cooldown can be cut short if things have since got
+   * materially worse — a rejection means "not under these conditions",
+   * and a goal sliding from BEHIND to CRITICAL is different conditions.
+   */
+  forecastStatus: text("forecast_status"),
   expectedImpact: numeric("expected_impact"),
   risk: numeric("risk"),
   status: escalationStatusEnum("status").notNull().default("pending"),

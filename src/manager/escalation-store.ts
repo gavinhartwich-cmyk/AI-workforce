@@ -12,6 +12,8 @@ export type ManagerEscalation = {
   action: string;
   diagnosis: string;
   whyApprovalRequired: string;
+  /** The goal's forecast status when this was raised — the baseline for "has it got worse since?". */
+  forecastStatus: string | null;
   expectedImpact: number | null;
   risk: number | null;
   status: EscalationStatus;
@@ -39,15 +41,57 @@ export type NewManagerEscalation = Omit<
  */
 export const EXECUTED_COOLDOWN_MS = 24 * 60 * 60 * 1000; // give the action a day to show an effect
 export const FAILED_COOLDOWN_MS = 6 * 60 * 60 * 1000; // don't hammer him while it's broken
-export const REJECTED_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // he said no — don't nag
+
+/**
+ * A rejection means "not under these conditions", not "never again" — hence
+ * 48h rather than the week this was first written as. A long timer trades
+ * one failure mode for its opposite: the reason to reject a
+ * discovery-volume increase today is usually that outreach is throttled
+ * (Groq quota, warm-up caps), and those get fixed in days — at which point
+ * the same recommendation may be right and a week-long mute would keep the
+ * manager silent about it.
+ *
+ * A timer is only a proxy for what actually matters, which is whether the
+ * situation changed — see `blocksReRaise`, which lets a genuinely worse
+ * forecast through early regardless of this.
+ */
+export const REJECTED_COOLDOWN_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * Severity order for GoalStatus, worst last. Only used to decide whether
+ * things have got materially worse since an escalation was settled.
+ */
+const STATUS_SEVERITY: Record<string, number> = {
+  ACHIEVED: 0,
+  ON_TRACK: 1,
+  NOT_STARTED: 2,
+  AT_RISK: 3,
+  BEHIND: 4,
+  CRITICAL: 5,
+  FAILED: 6,
+};
+
+function isWorse(current: string | null, previous: string | null): boolean {
+  if (!current || !previous) return false;
+  const now = STATUS_SEVERITY[current];
+  const before = STATUS_SEVERITY[previous];
+  return now !== undefined && before !== undefined && now > before;
+}
 
 export interface EscalationStore {
   /**
    * An existing escalation that should stop this goal+capability being
    * raised again right now — either still open (pending/approved), or
-   * settled recently enough to be within its cooldown.
+   * settled recently enough to be within its cooldown. Pass the goal's
+   * current forecast status so a genuinely worse situation can cut the
+   * cooldown short.
    */
-  findBlocking(goalId: string, capability: string, now?: Date): Promise<ManagerEscalation | null>;
+  findBlocking(
+    goalId: string,
+    capability: string,
+    now?: Date,
+    currentForecastStatus?: string | null
+  ): Promise<ManagerEscalation | null>;
   /** Everything Gavin has approved but the manager hasn't carried out yet. */
   listApproved(): Promise<ManagerEscalation[]>;
   raise(escalation: NewManagerEscalation): Promise<ManagerEscalation>;
@@ -64,6 +108,7 @@ function toDomain(row: typeof managerEscalations.$inferSelect): ManagerEscalatio
     action: row.action,
     diagnosis: row.diagnosis,
     whyApprovalRequired: row.whyApprovalRequired,
+    forecastStatus: row.forecastStatus,
     // numeric comes back as a string from postgres.js — coerce here rather
     // than letting a string masquerade as a number downstream.
     expectedImpact: row.expectedImpact === null ? null : Number(row.expectedImpact),
@@ -76,10 +121,24 @@ function toDomain(row: typeof managerEscalations.$inferSelect): ManagerEscalatio
   };
 }
 
-/** Whether an existing escalation still blocks re-raising the same question. */
-export function blocksReRaise(escalation: ManagerEscalation, now: Date): boolean {
-  // Still open — the ask is live either way.
+/**
+ * Whether an existing escalation still blocks re-raising the same question.
+ *
+ * `currentForecastStatus` is the escape hatch: if the goal has actually got
+ * worse since this was settled, that's a different situation from the one
+ * Gavin answered, so the cooldown is skipped and he gets asked again. Without
+ * it a rejection would mute a question even as the goal fell off a cliff.
+ */
+export function blocksReRaise(
+  escalation: ManagerEscalation,
+  now: Date,
+  currentForecastStatus?: string | null
+): boolean {
+  // Still open — the ask is live either way, however bad things get.
   if (escalation.status === "pending" || escalation.status === "approved") return true;
+
+  // Materially worse than when it was settled — worth asking again now.
+  if (isWorse(currentForecastStatus ?? null, escalation.forecastStatus)) return false;
 
   const cooldown =
     escalation.status === "rejected"
@@ -92,7 +151,12 @@ export function blocksReRaise(escalation: ManagerEscalation, now: Date): boolean
 }
 
 export class PostgresEscalationStore implements EscalationStore {
-  async findBlocking(goalId: string, capability: string, now: Date = new Date()): Promise<ManagerEscalation | null> {
+  async findBlocking(
+    goalId: string,
+    capability: string,
+    now: Date = new Date(),
+    currentForecastStatus?: string | null
+  ): Promise<ManagerEscalation | null> {
     const db = getDb();
     // Newest first: only the most recent settlement matters for the cooldown.
     const rows = await db.query.managerEscalations.findMany({
@@ -100,7 +164,7 @@ export class PostgresEscalationStore implements EscalationStore {
       orderBy: desc(managerEscalations.createdAt),
       limit: 5,
     });
-    const blocking = rows.map(toDomain).find((e) => blocksReRaise(e, now));
+    const blocking = rows.map(toDomain).find((e) => blocksReRaise(e, now, currentForecastStatus));
     return blocking ?? null;
   }
 
@@ -124,6 +188,7 @@ export class PostgresEscalationStore implements EscalationStore {
         action: escalation.action,
         diagnosis: escalation.diagnosis,
         whyApprovalRequired: escalation.whyApprovalRequired,
+        forecastStatus: escalation.forecastStatus,
         expectedImpact: escalation.expectedImpact === null ? null : String(escalation.expectedImpact),
         risk: escalation.risk === null ? null : String(escalation.risk),
       })

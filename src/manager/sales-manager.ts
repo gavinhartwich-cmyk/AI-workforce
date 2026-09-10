@@ -327,7 +327,8 @@ export class SalesManager {
       const blocking = await this.deps.escalations.findBlocking(
         report.goal.id,
         candidate.capability ?? "unknown",
-        now
+        now,
+        report.forecast.status
       );
       if (blocking) return;
 
@@ -338,6 +339,7 @@ export class SalesManager {
         action: candidate.action,
         diagnosis: report.bottleneck.diagnosis,
         whyApprovalRequired,
+        forecastStatus: report.forecast.status,
         expectedImpact: candidate.expectedImpact,
         risk: candidate.risk,
       });
