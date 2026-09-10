@@ -7,10 +7,19 @@ name: AI workforce cycle
 # mechanism across both repos, not two.
 #
 # Every store/tool this hits is already real (Postgres/Gmail/Places) —
-# the guardrails that make hourly runs safe (opt-out, the outreach-control
+# the guardrails that make frequent runs safe (opt-out, the outreach-control
 # kill switch, send-window, per-account warm-up caps) live *inside* the
 # app (src/outreach/*), not in this schedule, so they still apply no
 # matter how often this fires.
+#
+# Every 15 minutes (Gavin, 2026-09-10), matching hartwich-os's own cron
+# cadence — was hourly, which meant a goal set through the Sales Manager
+# chat (or any pace change) could sit for up to an hour before the
+# decision loop (SalesManager.runAll, the Sales Manager stage below)
+# ever looked at it. The chat itself was never on this schedule — it
+# calls Groq directly and replies instantly — this only affects how
+# often the autonomous pipeline stages actually run. No cost tradeoff:
+# both repos are public now, so Actions minutes are unlimited.
 #
 # Required repository secrets — one per non-empty line in .env.example:
 # AGENT_DATABASE_URL, HARTWICH_DATABASE_URL, GOOGLE_PLACES_API_KEY,
@@ -21,7 +30,7 @@ name: AI workforce cycle
 
 on:
   schedule:
-    - cron: "0 * * * *" # hourly
+    - cron: "*/15 * * * *" # every 15 minutes
   workflow_dispatch: {} # manual run from the Actions tab, for testing
 
 concurrency:
