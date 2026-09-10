@@ -67,7 +67,7 @@ import { PostgresExperimentStore } from "../experiments/experiment-store.js";
 import { PostgresFunnelReader } from "../db/hartwich-os/funnel-reader.js";
 import { PostgresAgentHealthReader } from "../db/agent-health-reader.js";
 import { PostgresAnalyticsReader } from "../db/analytics-reader.js";
-import { DEFAULT_DISCOVERY_TARGETS } from "../config/icp-targets.js";
+import { currentDiscoveryTargets } from "../config/icp-targets.js";
 import { SalesManager } from "../manager/sales-manager.js";
 
 const REQUIRED_ENV = ["AGENT_DATABASE_URL", "HARTWICH_DATABASE_URL", "GROQ_API_KEY"] as const;
@@ -144,9 +144,10 @@ async function main() {
   const followups = new SendFollowUpsPipeline(outreachDeps);
   const replies = new HandleInboundRepliesPipeline(outreachDeps);
 
-  // 1. Prospect Discovery — every configured ICP target (src/config/icp-targets.ts).
+  // 1. Prospect Discovery — this cycle's rotating slice of North America
+  // (src/config/icp-targets.ts) — never the full ~60-area list at once.
   await runStage("Prospect Discovery", async () => {
-    for (const target of DEFAULT_DISCOVERY_TARGETS) {
+    for (const target of currentDiscoveryTargets()) {
       const summary = await discovery.run(target);
       console.log(`  ${target.area} / "${target.keyword}": ${summary.found} found — ${summary.results.map((r) => r.outcome).join(", ") || "none"}`);
     }

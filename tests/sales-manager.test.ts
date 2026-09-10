@@ -18,6 +18,7 @@ import type { ManagerDecisionStore } from "../src/goals/manager-decision-store.j
 import type { ExperimentStore, CreateExperimentInput } from "../src/experiments/experiment-store.js";
 import type { Experiment } from "../src/experiments/types.js";
 import type { DiscoverResearchQualifyInput, PipelineSummary } from "../src/pipelines/discover-research-qualify.js";
+import type { DiscoveryTarget } from "../src/config/icp-targets.js";
 import type { ManagerDecision, SalesGoal } from "../src/goals/types.js";
 
 process.env.GAVIN_EMAIL = "gavinhartwich@gmail.com";
@@ -182,6 +183,10 @@ function buildManager(opts: {
   funnelCounts?: FunnelCounts;
   discovery?: FakeDiscoveryPipeline;
   experiments?: FakeExperimentStore;
+  /** Explicit so these tests stay decoupled from the real, rotating
+   * North-America target list (src/config/icp-targets.ts) — that's
+   * business config, not something a unit test should be coupled to. */
+  discoveryTargets?: DiscoveryTarget[];
 }) {
   const decisions = new RecordingManagerDecisionStore();
   const experiments = opts.experiments ?? new FakeExperimentStore();
@@ -206,6 +211,7 @@ function buildManager(opts: {
     discovery,
     tools,
     policy,
+    discoveryTargets: opts.discoveryTargets ?? [{ area: "Winnipeg, MB", keyword: "HVAC contractor" }],
   });
 
   return { manager, decisions, experiments, discovery, gmailSender, writeStore };

@@ -19,7 +19,7 @@ import { checkAuthority, DEFAULT_AUTHORITY_POLICIES } from "./authority-policy.j
 import type { AuthorityPolicy, InterventionCandidate, WorkIntensity } from "./types.js";
 import type { ExperimentStore } from "../experiments/experiment-store.js";
 import type { DiscoverResearchQualifyInput, PipelineSummary } from "../pipelines/discover-research-qualify.js";
-import { DEFAULT_DISCOVERY_TARGETS, BASE_DISCOVERY_VOLUME, type DiscoveryTarget } from "../config/icp-targets.js";
+import { currentDiscoveryTargets, BASE_DISCOVERY_VOLUME, type DiscoveryTarget } from "../config/icp-targets.js";
 
 /** A fixed, pre-approved copywriting variation — not LLM-invented copy, so it needs no per-run approval (SPEC.md §20's "approved... messaging rules"). */
 const DEFAULT_EXPERIMENT_TEST_DIRECTIVE =
@@ -216,7 +216,7 @@ export class SalesManager {
     candidate: InterventionCandidate
   ): Promise<Extract<ManagerCycleExecution, { kind: "discovery_increase" }>> {
     const maxResults = Math.round(BASE_DISCOVERY_VOLUME * (1 + (candidate.proposedChangePercent ?? 0) / 100));
-    const targets = this.deps.discoveryTargets ?? DEFAULT_DISCOVERY_TARGETS;
+    const targets = this.deps.discoveryTargets ?? currentDiscoveryTargets();
     const runs: { target: DiscoveryTarget; summary: PipelineSummary }[] = [];
     for (const target of targets) {
       const summary = await this.deps.discovery.run({ area: target.area, keyword: target.keyword, maxResults });
