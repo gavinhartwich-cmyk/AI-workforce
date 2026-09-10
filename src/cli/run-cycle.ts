@@ -199,7 +199,21 @@ async function main() {
   console.log(`\nCycle finished ${new Date().toISOString()}`);
 }
 
-main().catch((err) => {
-  console.error("Fatal error outside any stage:", err);
-  process.exitCode = 1;
-});
+main()
+  .catch((err) => {
+    console.error("Fatal error outside any stage:", err);
+    process.exitCode = 1;
+  })
+  .finally(() => {
+    // Every store above opens its own lazy postgres connection pool
+    // (src/db/client.ts, src/db/hartwich-os/client.ts) and none of them
+    // are ever closed — harmless in a long-lived process, but in this
+    // cron entrypoint the open sockets keep Node's event loop alive
+    // after main() resolves with nothing left to do. Confirmed live: a
+    // real cycle finished (every stage logged its ✓/✗) in under 5
+    // minutes, then the process sat open until GitHub Actions killed it
+    // at the 30-minute job timeout. Exiting explicitly is simpler and
+    // more robust than threading every store's close() through both
+    // client modules just for a one-shot CLI process.
+    process.exit(process.exitCode ?? 0);
+  });
