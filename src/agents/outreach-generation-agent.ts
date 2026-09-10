@@ -78,6 +78,7 @@ Write the initial message plus up to ${c.maxFollowUps} short follow-ups (numbere
 - Subject lines: short and specific, not a complete-sentence summary of the pitch.
 - Follow the given strategy exactly: use its angle, hook, and personalization points — don't invent your own.
 - If no contact name is known, greet generically ("Hi there," or similar) — never invent a name or address by a job title as if it were one.
+- End every message (initial and every follow-up) with a brief sign-off on its own line(s): a closing word, then ${"{{yourName}}"}, then ${"{{yourCompany}}"} — e.g. "Best,\n${"{{yourName}}"}\n${"{{yourCompany}}"}". Never send a message with no signature — an unsigned cold email reads as spam, not a real person.
 - Keep punctuation plain — avoid leaning on em dashes.`;
 }
 
@@ -92,7 +93,7 @@ export const outreachGenerationAgent: AgentDefinition<OutreachGenerationInput, O
   autonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE,
   modelLane: "fast",
   buildPrompt(input) {
-    const system = buildSystemPrompt().replace("{{yourName}}", input.yourName).replace("{{yourCompany}}", input.yourCompany);
+    const system = buildSystemPrompt().replaceAll("{{yourName}}", input.yourName).replaceAll("{{yourCompany}}", input.yourCompany);
     const contactLine = input.contact?.name
       ? `Contact: ${input.contact.name}${input.contact.title ? `, ${input.contact.title}` : ""}`
       : "Contact: no named contact known — greet generically.";

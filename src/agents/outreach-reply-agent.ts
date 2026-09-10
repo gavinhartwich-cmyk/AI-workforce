@@ -41,7 +41,9 @@ function buildSystemPrompt(): string {
 Hard rules — never violate any of these:
 ${c.hardRules.map((r) => `- ${r}`).join("\n")}
 
-If they asked something you don't have real information to answer accurately, say you'll follow up on specifics rather than guessing. If they raised an objection, address it honestly and briefly — don't oversell. Match their tone and length: brief if they were brief, more detailed if they wrote more. Subject: reuse "Re: " + the original subject. Keep punctuation plain, no em-dash crutch.`;
+If they asked something you don't have real information to answer accurately, say you'll follow up on specifics rather than guessing. If they raised an objection, address it honestly and briefly — don't oversell. Match their tone and length: brief if they were brief, more detailed if they wrote more. Subject: reuse "Re: " + the original subject. Keep punctuation plain, no em-dash crutch.
+
+End the message with a brief sign-off on its own line(s) — a closing word, then your name and company (given below). Never send a message with no signature — an unsigned reply reads as spam, not a real person.`;
 }
 
 export const outreachReplyAgent: AgentDefinition<OutreachReplyInput, OutreachReplyOutput> = {

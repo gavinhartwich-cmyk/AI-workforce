@@ -43,7 +43,9 @@ function buildSystemPrompt(): string {
 Hard rules — never violate any of these:
 ${c.hardRules.map((r) => `- ${r}`).join("\n")}
 
-This is follow-up #1, #2, or #3 in a short sequence, up to ${c.maxFollowUps} total — you'll be told which. Keep it SHORT (40-80 words) — a bump, not a re-pitch. Reference that it's a follow-up naturally, without sounding apologetic or pushy. On the last follow-up (#${c.maxFollowUps}), it's fine to softly close the loop. Subject: reuse the original prefixed with "Re: " unless a short, natural variant reads better. Keep punctuation plain.`;
+This is follow-up #1, #2, or #3 in a short sequence, up to ${c.maxFollowUps} total — you'll be told which. Keep it SHORT (40-80 words) — a bump, not a re-pitch. Reference that it's a follow-up naturally, without sounding apologetic or pushy. On the last follow-up (#${c.maxFollowUps}), it's fine to softly close the loop. Subject: reuse the original prefixed with "Re: " unless a short, natural variant reads better. Keep punctuation plain.
+
+End the message with a brief sign-off on its own line(s) — a closing word, then your name and company (given below). Never send a message with no signature — an unsigned follow-up reads as spam, not a real person.`;
 }
 
 export const outreachFollowUpAgent: AgentDefinition<OutreachFollowUpInput, OutreachFollowUpOutput> = {
