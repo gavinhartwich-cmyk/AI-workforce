@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { ModelMessage, ModelProvider, ModelResponse, StructuredResponse } from "../types.js";
+import type { CallAttribution, ModelMessage, ModelProvider, ModelResponse, StructuredResponse } from "../types.js";
 
 /**
  * Deterministic, no-network provider — for tests and for anyone exploring
@@ -9,6 +9,9 @@ import type { ModelMessage, ModelProvider, ModelResponse, StructuredResponse } f
  */
 export class FakeModelProvider implements ModelProvider {
   readonly id = "fake";
+
+  /** Attribution seen on each structuredGenerate call, so tests can assert the runtime passes it. */
+  readonly seenAttribution: (CallAttribution | undefined)[] = [];
 
   constructor(
     private opts: {
@@ -23,7 +26,7 @@ export class FakeModelProvider implements ModelProvider {
     } = {}
   ) {}
 
-  async generate(_input: { messages: ModelMessage[]; maxTokens?: number }): Promise<ModelResponse> {
+  async generate(_input: { messages: ModelMessage[]; maxTokens?: number; attribution?: CallAttribution }): Promise<ModelResponse> {
     return {
       content: this.opts.generateResponse ?? "",
       usage: { inputTokens: 0, outputTokens: 0 },
@@ -37,7 +40,9 @@ export class FakeModelProvider implements ModelProvider {
     jsonSchema: Record<string, unknown>;
     zodSchema: z.ZodType<T>;
     maxTokens?: number;
+    attribution?: CallAttribution;
   }): Promise<StructuredResponse<T>> {
+    this.seenAttribution.push(input.attribution);
     const canned = this.opts.responsesBySchema?.[input.schemaName] ?? this.opts.structuredResponse;
     const result = input.zodSchema.safeParse(canned);
     if (!result.success) {

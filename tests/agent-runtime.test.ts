@@ -29,7 +29,7 @@ function buildRuntime(opts: {
     policy: new DefaultPolicyEngine(opts.rules ?? []),
     audit,
   });
-  return { runtime, audit };
+  return { runtime, audit, provider };
 }
 
 describe("AgentRuntime — happy path", () => {
@@ -74,6 +74,31 @@ describe("AgentRuntime — happy path", () => {
 });
 
 describe("AgentRuntime — input validation", () => {
+  it("tells the provider which agent is calling, so token spend can be attributed", async () => {
+    // Without this, agent_runs and groq_token_events share no key and
+    // "which agent costs what" is unanswerable — which is the number that
+    // decides whether two agents are worth merging into one call.
+    const { runtime, provider } = buildRuntime({
+      structuredResponse: {
+        assessment: "Low review count — worth a human look.",
+        needsCompanyRecord: false,
+        toolCalls: [],
+      },
+    });
+
+    const result = await runtime.run(companyReviewAgent, {
+      companyId: COMPANY_ID,
+      reason: "Only 3 Google reviews.",
+    });
+
+    expect(result.status).toBe("succeeded");
+
+    expect(provider.seenAttribution).toHaveLength(1);
+    expect(provider.seenAttribution[0]?.agentId).toBe(companyReviewAgent.id);
+    // Same runId the audit record carries, so spend joins back to the run.
+    expect(provider.seenAttribution[0]?.runId).toBe(result.runId);
+  });
+
   it("fails closed on invalid input without calling the model", async () => {
     const { runtime, audit } = buildRuntime({ structuredResponse: {} });
 
