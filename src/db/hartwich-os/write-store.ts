@@ -53,7 +53,8 @@ export type CreateEmailDraftResult = { draftId: string };
 export type RecordOutboundEmailInput = {
   companyId: string;
   contactId: string | null;
-  dealId: string;
+  /** Null when the caller had no deal in hand — recordOutboundEmail resolves the company's open one. */
+  dealId: string | null;
   kind: "cold_outreach" | "follow_up" | "reply";
   accountIndex: 0 | 1 | 2;
   to: string;
@@ -181,18 +182,38 @@ export class PostgresHartwichWriteStore implements HartwichWriteStore {
 
       let dealId: string | null = null;
       if (input.status === "qualified") {
-        const [firstStage] = await tx
-          .select()
-          .from(pipelineStages)
-          .orderBy(asc(pipelineStages.position))
+        // Reuse an open deal rather than adding a second card for the same
+        // company. Both this and hartwich-os's own "Move to board" inserted
+        // unconditionally, which left five companies holding two or three
+        // deals each — the extras sitting in New Lead looking un-actioned
+        // while the company's real outreach hung off a sibling deal
+        // (2026-09-11). Won and lost deals don't count as open: a company
+        // genuinely being worked again deserves a fresh card.
+        const [existing] = await tx
+          .select({ id: deals.id })
+          .from(deals)
+          .innerJoin(pipelineStages, eq(pipelineStages.id, deals.stageId))
+          .where(
+            and(eq(deals.companyId, company.id), eq(pipelineStages.isWon, false), eq(pipelineStages.isLost, false))
+          )
           .limit(1);
 
-        if (firstStage) {
-          const [deal] = await tx
-            .insert(deals)
-            .values({ companyId: company.id, stageId: firstStage.id })
-            .returning();
-          dealId = deal.id;
+        if (existing) {
+          dealId = existing.id;
+        } else {
+          const [firstStage] = await tx
+            .select()
+            .from(pipelineStages)
+            .orderBy(asc(pipelineStages.position))
+            .limit(1);
+
+          if (firstStage) {
+            const [deal] = await tx
+              .insert(deals)
+              .values({ companyId: company.id, stageId: firstStage.id })
+              .returning();
+            dealId = deal.id;
+          }
         }
       }
 
@@ -259,12 +280,36 @@ export class PostgresHartwichWriteStore implements HartwichWriteStore {
     const now = new Date();
 
     return db.transaction(async (tx) => {
+      // Resolve the deal when the caller didn't have one. get_outreach_target
+      // returns dealId: null whenever the company has no deal yet, and every
+      // downstream write keyed off it then silently did nothing: the stage
+      // update matched no row, so an emailed lead sat in New Lead, and the
+      // activity was written with deal_id null, so the board couldn't tell
+      // it had been contacted. 8 of 23 outbound activities were unlinked
+      // this way (2026-09-11).
+      let dealId = input.dealId;
+      if (!dealId) {
+        const [open] = await tx
+          .select({ id: deals.id })
+          .from(deals)
+          .innerJoin(pipelineStages, eq(pipelineStages.id, deals.stageId))
+          .where(
+            and(
+              eq(deals.companyId, input.companyId),
+              eq(pipelineStages.isWon, false),
+              eq(pipelineStages.isLost, false)
+            )
+          )
+          .limit(1);
+        dealId = open?.id ?? null;
+      }
+
       const [activity] = await tx
         .insert(activities)
         .values({
           companyId: input.companyId,
           contactId: input.contactId,
-          dealId: input.dealId,
+          dealId,
           type: "email",
           direction: "outbound",
           bodyText: input.body,
@@ -299,7 +344,7 @@ export class PostgresHartwichWriteStore implements HartwichWriteStore {
             lastOutboundEmailAt: now,
             updatedAt: now,
           })
-          .where(eq(deals.id, input.dealId));
+          .where(dealId ? eq(deals.id, dealId) : sql`false`);
       } else if (input.kind === "follow_up") {
         await tx
           .update(deals)
@@ -310,19 +355,22 @@ export class PostgresHartwichWriteStore implements HartwichWriteStore {
             stageEnteredAt: now,
             updatedAt: now,
           })
-          .where(eq(deals.id, input.dealId));
+          .where(dealId ? eq(deals.id, dealId) : sql`false`);
       } else {
         // reply: already in Engaged (recordInboundReply moved it there when
         // the inbound message came in) — just keep the cadence clock
         // current, same as hartwich-os's own applyPostSendDealUpdate.
-        await tx.update(deals).set({ lastOutboundEmailAt: now, updatedAt: now }).where(eq(deals.id, input.dealId));
+        await tx.update(deals).set({ lastOutboundEmailAt: now, updatedAt: now }).where(dealId ? eq(deals.id, dealId) : sql`false`);
       }
 
       await tx.insert(auditLog).values({
         action: `email.${input.kind}_sent`,
-        entityType: "deal",
-        entityId: input.dealId,
-        diff: auditDiff(actor, { messageId: message.id, activityId: activity.id }),
+        // Falls back to the company when the send genuinely has no deal
+        // behind it — an audit row pinned to the wrong entity, or dropped
+        // because one field was null, is worse than a coarser one.
+        entityType: dealId ? "deal" : "company",
+        entityId: dealId ?? input.companyId,
+        diff: auditDiff(actor, { messageId: message.id, activityId: activity.id, dealId }),
       });
 
       return { activityId: activity.id, messageId: message.id };
