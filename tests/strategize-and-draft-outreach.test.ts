@@ -66,8 +66,7 @@ function buildPipeline(opts: { target: OutreachTarget | null; draftStore: Hartwi
 
   const provider = new FakeModelProvider({
     responsesBySchema: {
-      outreach_strategy_agent_output: STRATEGY_RESPONSE,
-      outreach_generation_agent_output: GENERATION_RESPONSE,
+      outreach_composer_agent_output: { strategy: STRATEGY_RESPONSE, ...GENERATION_RESPONSE },
     },
   });
 
@@ -120,14 +119,13 @@ describe("StrategizeAndDraftOutreachPipeline", () => {
     // the strategy prompt, by inspecting the user message it was given.
     const assertingProvider = new FakeModelProvider({
       responsesBySchema: {
-        outreach_strategy_agent_output: STRATEGY_RESPONSE,
-        outreach_generation_agent_output: GENERATION_RESPONSE,
+        outreach_composer_agent_output: { strategy: STRATEGY_RESPONSE, ...GENERATION_RESPONSE },
       },
     });
     const originalStructuredGenerate = assertingProvider.structuredGenerate.bind(assertingProvider);
     let sawDirective = false;
     assertingProvider.structuredGenerate = async (input) => {
-      if (input.schemaName === "outreach_strategy_agent_output") {
+      if (input.schemaName === "outreach_composer_agent_output") {
         sawDirective = input.messages.some((m) => m.content.includes("Lead with the rating gap"));
       }
       return originalStructuredGenerate(input);

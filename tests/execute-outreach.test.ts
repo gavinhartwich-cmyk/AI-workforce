@@ -115,8 +115,7 @@ function buildPipeline(opts: {
 
   const provider = new FakeModelProvider({
     responsesBySchema: {
-      outreach_strategy_agent_output: STRATEGY_RESPONSE,
-      outreach_generation_agent_output: GENERATION_RESPONSE,
+      outreach_composer_agent_output: { strategy: STRATEGY_RESPONSE, ...GENERATION_RESPONSE },
     },
   });
 

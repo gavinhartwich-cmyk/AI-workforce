@@ -4,8 +4,7 @@ import { ToolExecutor } from "../runtime/tool-executor.js";
 import { ToolRegistry } from "../runtime/tool-registry.js";
 import type { PolicyEngine } from "../runtime/types.js";
 import { AUTONOMY } from "../runtime/autonomy-levels.js";
-import { outreachStrategyAgent } from "../agents/outreach-strategy-agent.js";
-import { outreachGenerationAgent } from "../agents/outreach-generation-agent.js";
+import { outreachComposerAgent } from "../agents/outreach-composer-agent.js";
 import { APPROVED_MESSAGING_CONFIG } from "../outreach/approved-messaging-config.js";
 import type { Experiment } from "../experiments/types.js";
 import { assignVariant } from "../experiments/assignment.js";
@@ -58,7 +57,10 @@ export class StrategizeAndDraftOutreachPipeline {
 
     const variant = experiment ? assignVariant(experiment, companyId) : null;
 
-    const strategyRun = await this.deps.runtime.run(outreachStrategyAgent, {
+    // Same single call the autonomous path uses (execute-outreach.ts) —
+    // strategy and copy together rather than a chain that re-sent the
+    // strategy back in as the second call's input.
+    const generationRun = await this.deps.runtime.run(outreachComposerAgent, {
       company: {
         name: target.company.name,
         website: target.company.website,
@@ -70,30 +72,10 @@ export class StrategizeAndDraftOutreachPipeline {
         servicesOffered: target.company.servicesOffered,
         apparentSize: target.company.apparentSize,
       },
-      contactKnown: !!target.contact.name,
+      contact: { name: target.contact.name, title: target.contact.title },
       qualificationReasoning: target.company.qualificationReasoning,
       enabledChannels: APPROVED_MESSAGING_CONFIG.enabledChannels,
       experimentDirective: variant?.directive ?? null,
-    });
-    if (strategyRun.status !== "succeeded") {
-      return {
-        companyId,
-        outcome: "error",
-        error: `Outreach Strategy Agent ${strategyRun.status}: ${
-          strategyRun.status === "denied" ? strategyRun.reason : strategyRun.error
-        }`,
-      };
-    }
-
-    const generationRun = await this.deps.runtime.run(outreachGenerationAgent, {
-      company: { name: target.company.name, website: target.company.website },
-      contact: { name: target.contact.name, title: target.contact.title },
-      strategy: {
-        angle: strategyRun.output.angle,
-        hook: strategyRun.output.hook,
-        personalizationPoints: strategyRun.output.personalizationPoints,
-        cta: strategyRun.output.cta,
-      },
       yourName: this.deps.yourName ?? "Gavin Hartwich",
       yourCompany: this.deps.yourCompany ?? "Hartwich Labs",
     });
@@ -101,7 +83,7 @@ export class StrategizeAndDraftOutreachPipeline {
       return {
         companyId,
         outcome: "error",
-        error: `Outreach Generation Agent ${generationRun.status}: ${
+        error: `Outreach Composer Agent ${generationRun.status}: ${
           generationRun.status === "denied" ? generationRun.reason : generationRun.error
         }`,
       };
