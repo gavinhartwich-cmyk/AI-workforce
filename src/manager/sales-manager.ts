@@ -28,6 +28,15 @@ const DEFAULT_EXPERIMENT_TEST_DIRECTIVE =
 /** Documented placeholder, not a calibrated power calculation — same honesty norm as pace-forecast.ts's own probability heuristic. */
 const DEFAULT_EXPERIMENT_MIN_SAMPLE_PER_VARIANT = 30;
 
+/**
+ * How many times an approved escalation is retried before it's treated as
+ * genuinely failed and put back in front of Gavin. Sized for the failure
+ * that actually happens — a Groq daily-cap 429, which clears on its own —
+ * so a full day of 15-minute cycles can't burn through it, but a decision
+ * that is really broken still surfaces rather than retrying forever.
+ */
+const MAX_EXECUTION_ATTEMPTS = 8;
+
 export type ManagerCycleExecution =
   | { kind: "none" }
   | { kind: "discovery_increase"; maxResults: number; runs: { target: DiscoveryTarget; summary: PipelineSummary }[] }
@@ -327,7 +336,19 @@ export class SalesManager {
           now
         );
       } catch (err) {
-        await this.deps.escalations.markFailed(escalation.id, err instanceof Error ? err.message : String(err), now);
+        // An approval is durable. If carrying it out fails for an
+        // environmental reason — Groq's daily token cap did exactly this on
+        // 2026-09-10 — that's not a new decision for Gavin to make, and
+        // re-asking him to approve what he already approved is pure noise.
+        // Keep it approved and try again next cycle; only give up, and only
+        // then put it back in front of him, after repeated failures.
+        const note = err instanceof Error ? err.message : String(err);
+        const attempts = escalation.executionAttempts + 1;
+        if (attempts < MAX_EXECUTION_ATTEMPTS) {
+          await this.deps.escalations.recordFailedAttempt(escalation.id, `Attempt ${attempts} failed: ${note}`, attempts, now);
+        } else {
+          await this.deps.escalations.markFailed(escalation.id, `Gave up after ${attempts} attempts. Last error: ${note}`, now);
+        }
       }
     }
   }

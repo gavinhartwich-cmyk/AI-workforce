@@ -1,6 +1,6 @@
-import { eq, sql } from "drizzle-orm";
+import { gte, sql } from "drizzle-orm";
 import { getDb } from "../db/client.js";
-import { groqTokenUsage } from "../db/schema.js";
+import { groqTokenEvents } from "../db/schema.js";
 import type { ModelUsage } from "./types.js";
 
 /**
@@ -31,7 +31,7 @@ export function agentDailyTokenBudget(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_AGENT_DAILY_TOKEN_BUDGET;
 }
 
-/** YYYY-MM-DD in UTC — the window Groq's own daily cap tracks. */
+/** YYYY-MM-DD in UTC. Kept for callers that want a day label; the budget itself is a rolling window. */
 export function utcDateKey(at: Date = new Date()): string {
   return at.toISOString().slice(0, 10);
 }
@@ -50,6 +50,9 @@ export interface TokenBudget {
   state(at?: Date): Promise<BudgetState>;
 }
 
+/** Groq's cap is a rolling window, so ours has to be the same shape. */
+export const ROLLING_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export class PostgresTokenBudget implements TokenBudget {
   constructor(private budget: number = agentDailyTokenBudget()) {}
 
@@ -57,33 +60,28 @@ export class PostgresTokenBudget implements TokenBudget {
     const total = usage.inputTokens + usage.outputTokens;
     if (total <= 0) return;
 
+    // Append-only: an event per call, summed over a rolling window at read
+    // time. A day-bucket counter can't express "how much have we used in
+    // the last 24 hours", which is the only question Groq's cap answers.
     const db = getDb();
-    // Upsert-and-add in one statement: several agents can finish calls
-    // concurrently within a cycle, and read-then-write would lose updates.
-    await db
-      .insert(groqTokenUsage)
-      .values({
-        usageDate: utcDateKey(at),
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        updatedAt: at,
-      })
-      .onConflictDoUpdate({
-        target: groqTokenUsage.usageDate,
-        set: {
-          inputTokens: sql`${groqTokenUsage.inputTokens} + ${usage.inputTokens}`,
-          outputTokens: sql`${groqTokenUsage.outputTokens} + ${usage.outputTokens}`,
-          updatedAt: at,
-        },
-      });
+    await db.insert(groqTokenEvents).values({
+      at,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+    });
   }
 
   async state(at: Date = new Date()): Promise<BudgetState> {
     const db = getDb();
-    const row = await db.query.groqTokenUsage.findFirst({
-      where: eq(groqTokenUsage.usageDate, utcDateKey(at)),
-    });
-    const usedToday = row ? row.inputTokens + row.outputTokens : 0;
+    const since = new Date(at.getTime() - ROLLING_WINDOW_MS);
+    const [row] = await db
+      .select({
+        total: sql<number>`coalesce(sum(${groqTokenEvents.inputTokens} + ${groqTokenEvents.outputTokens}), 0)::int`,
+      })
+      .from(groqTokenEvents)
+      .where(gte(groqTokenEvents.at, since));
+
+    const usedToday = row?.total ?? 0;
     const remaining = Math.max(0, this.budget - usedToday);
     return { usedToday, budget: this.budget, remaining, exhausted: remaining <= 0 };
   }

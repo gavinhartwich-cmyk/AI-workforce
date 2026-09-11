@@ -340,6 +340,18 @@ export const managerEscalations = pgTable("manager_escalations", {
   status: escalationStatusEnum("status").notNull().default("pending"),
   /** Set when execution is attempted after approval — why it failed, if it did. */
   executionNote: text("execution_note"),
+  /**
+   * How many times execution has been tried since approval.
+   *
+   * An approval is durable: if carrying it out fails for an environmental
+   * reason (Groq's daily token cap, on 2026-09-10), that is not a new
+   * decision for Gavin to make, and asking him to approve the same thing
+   * again is just noise. So a failed attempt keeps the escalation
+   * "approved" and retries next cycle, and only after this many failures
+   * does it become "failed" — which is the point a human genuinely does
+   * need to look.
+   */
+  executionAttempts: integer("execution_attempts").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   decidedAt: timestamp("decided_at", { withTimezone: true }),
   executedAt: timestamp("executed_at", { withTimezone: true }),
@@ -355,4 +367,28 @@ export const groqTokenUsage = pgTable("groq_token_usage", {
   inputTokens: integer("input_tokens").notNull().default(0),
   outputTokens: integer("output_tokens").notNull().default(0),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// groq_token_events — one row per Groq call, so usage can be summed over a
+// ROLLING 24-hour window.
+//
+// groq_token_usage above buckets by calendar day, which turned out not to be
+// what Groq's cap measures. On 2026-09-11 at 03:04 UTC — three hours after
+// UTC midnight — Groq still reported "Used 199,940 of 200,000" and offered
+// "try again in 9m45s". A calendar reset would have zeroed it; small
+// minute-scale retry hints mean tokens age out continuously instead. So the
+// day-bucket ledger read 23k while Groq's own counter read 199.9k, and the
+// agents' budget guard let everything through while every call 429'd.
+//
+// Worse, the cron consumed each small amount as it aged out, keeping usage
+// pinned at the ceiling and never letting enough accumulate for the Sales
+// Manager chat. Matching Groq's own window is what makes the reserve real.
+// ---------------------------------------------------------------------------
+
+export const groqTokenEvents = pgTable("groq_token_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
 });

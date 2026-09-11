@@ -207,6 +207,7 @@ class FakeEscalationStore implements EscalationStore {
       id: `esc-${++this.seq}`,
       status: "pending",
       executionNote: null,
+      executionAttempts: 0,
       createdAt: new Date(),
       decidedAt: null,
       executedAt: null,
@@ -217,6 +218,10 @@ class FakeEscalationStore implements EscalationStore {
   async markExecuted(id: string, note: string | null, at: Date) {
     const row = this.raised.find((e) => e.id === id);
     if (row) Object.assign(row, { status: "executed", executionNote: note, executedAt: at });
+  }
+  async recordFailedAttempt(id: string, note: string, attempts: number, at: Date) {
+    const row = this.raised.find((e) => e.id === id);
+    if (row) Object.assign(row, { executionNote: note, executionAttempts: attempts, executedAt: at });
   }
   async markFailed(id: string, note: string, at: Date) {
     const row = this.raised.find((e) => e.id === id);
@@ -387,6 +392,7 @@ describe("SalesManager", () => {
       risk: 0.3,
       status: "approved",
       executionNote: null,
+      executionAttempts: 0,
       createdAt: AS_OF,
       decidedAt: AS_OF,
       executedAt: null,
@@ -493,6 +499,7 @@ describe("SalesManager", () => {
       risk: 0.3,
       status: "rejected",
       executionNote: null,
+      executionAttempts: 0,
       createdAt: AS_OF,
       decidedAt: AS_OF,
       executedAt: null,
@@ -512,6 +519,54 @@ describe("SalesManager", () => {
     expect(escalations.raised).toHaveLength(2);
   });
 
+  it("retries an approved escalation that failed for an environmental reason, without re-asking", async () => {
+    // Gavin approved this; execution then hit Groq's daily token cap. That's
+    // not a new decision for him to make, so it must stay approved and retry
+    // rather than going "failed" and re-surfacing as a fresh ask.
+    const approved: ManagerEscalation = {
+      id: "esc-approved",
+      goalId: "goal-1",
+      capability: "discover_prospects",
+      proposedChangePercent: 100,
+      action: "Increase Prospect Discovery volume by 100%.",
+      diagnosis: "d",
+      whyApprovalRequired: "Exceeds the 20% autonomous cap.",
+      forecastStatus: "CRITICAL",
+      expectedImpact: 0.01,
+      risk: 0.3,
+      status: "approved",
+      executionNote: null,
+      executionAttempts: 0,
+      createdAt: AS_OF,
+      decidedAt: AS_OF,
+      executedAt: null,
+    };
+    const escalations = new FakeEscalationStore([approved]);
+    const failing = {
+      calls: [] as DiscoverResearchQualifyInput[],
+      async run(input: DiscoverResearchQualifyInput): Promise<PipelineSummary> {
+        this.calls.push(input);
+        throw new Error("429 rate limit reached on tokens per day (TPD)");
+      },
+    };
+    const { manager } = buildManager({
+      goals: [buildGoal({ target: 1000 })],
+      funnelCounts: { prospects: 100, qualified: 50, won: 0, wonValue: 0 },
+      discovery: failing as unknown as FakeDiscoveryPipeline,
+      escalations,
+    });
+
+    await manager.runAll(AS_OF);
+
+    const row = escalations.raised.find((e) => e.id === "esc-approved")!;
+    expect(row.status).toBe("approved"); // still approved — will retry
+    expect(row.executionAttempts).toBe(1);
+    expect(row.executionNote).toMatch(/Attempt 1 failed/);
+
+    // And because it's still approved, it keeps blocking a fresh ask.
+    expect(await escalations.findBlocking("goal-1", "discover_prospects", AS_OF, "CRITICAL")).not.toBeNull();
+  });
+
   it("marks an approved escalation failed when nothing can carry out that capability", async () => {
     const approved: ManagerEscalation = {
       id: "esc-odd",
@@ -526,6 +581,7 @@ describe("SalesManager", () => {
       risk: null,
       status: "approved",
       executionNote: null,
+      executionAttempts: 0,
       createdAt: AS_OF,
       decidedAt: AS_OF,
       executedAt: null,

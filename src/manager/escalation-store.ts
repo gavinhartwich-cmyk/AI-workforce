@@ -18,6 +18,7 @@ export type ManagerEscalation = {
   risk: number | null;
   status: EscalationStatus;
   executionNote: string | null;
+  executionAttempts: number;
   createdAt: Date;
   decidedAt: Date | null;
   executedAt: Date | null;
@@ -25,7 +26,7 @@ export type ManagerEscalation = {
 
 export type NewManagerEscalation = Omit<
   ManagerEscalation,
-  "id" | "status" | "executionNote" | "createdAt" | "decidedAt" | "executedAt"
+  "id" | "status" | "executionNote" | "executionAttempts" | "createdAt" | "decidedAt" | "executedAt"
 >;
 
 /**
@@ -97,6 +98,8 @@ export interface EscalationStore {
   raise(escalation: NewManagerEscalation): Promise<ManagerEscalation>;
   markExecuted(id: string, note: string | null, at: Date): Promise<void>;
   markFailed(id: string, note: string, at: Date): Promise<void>;
+  /** Records a failed attempt but LEAVES it approved, so it retries — an approval is durable. */
+  recordFailedAttempt(id: string, note: string, attempts: number, at: Date): Promise<void>;
 }
 
 function toDomain(row: typeof managerEscalations.$inferSelect): ManagerEscalation {
@@ -115,6 +118,7 @@ function toDomain(row: typeof managerEscalations.$inferSelect): ManagerEscalatio
     risk: row.risk === null ? null : Number(row.risk),
     status: row.status,
     executionNote: row.executionNote,
+    executionAttempts: row.executionAttempts,
     createdAt: row.createdAt,
     decidedAt: row.decidedAt,
     executedAt: row.executedAt,
@@ -201,6 +205,14 @@ export class PostgresEscalationStore implements EscalationStore {
     await db
       .update(managerEscalations)
       .set({ status: "executed", executionNote: note, executedAt: at })
+      .where(eq(managerEscalations.id, id));
+  }
+
+  async recordFailedAttempt(id: string, note: string, attempts: number, at: Date): Promise<void> {
+    const db = getDb();
+    await db
+      .update(managerEscalations)
+      .set({ executionNote: note, executionAttempts: attempts, executedAt: at })
       .where(eq(managerEscalations.id, id));
   }
 
