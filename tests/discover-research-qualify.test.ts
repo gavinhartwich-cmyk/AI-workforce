@@ -87,7 +87,9 @@ function buildPipeline(opts: { writeStore: HartwichWriteStore; existingCompanies
             p.placeId === "place-hvac-co" ? "Real HVAC service business." : "Supply store, not a service business.",
         })),
       },
-      research_agent_output: {
+      // Research and qualification arrive together now — one call per
+      // candidate instead of a chain that re-sent the research back in.
+      prospect_assessment_agent_output: {
         servicesOffered: ["furnace repair", "AC installation"],
         apparentSize: "small",
         contactName: null,
@@ -97,14 +99,14 @@ function buildPipeline(opts: { writeStore: HartwichWriteStore; existingCompanies
         contactLinkedinUrl: null,
         summary: "Small local HVAC shop with a basic website.",
         salesSignals: [{ signal: "Low review count", evidence: "Only 3 Google reviews." }],
-      },
-      qualification_agent_output: {
-        icpFit: { value: 90, reasoning: "Local HVAC service business, small size — squarely in Hartwich's ICP." },
-        opportunity: { value: 85, reasoning: "3 reviews and 3.2 stars — clear reputation-infrastructure gap." },
-        contactability: { value: 20, reasoning: "No named contact or email found." },
-        businessQuality: { value: 60, reasoning: "Has a website listing real services." },
-        timing: { value: 50, reasoning: "No specific timing evidence either way." },
-        dataConfidence: { value: 70, reasoning: "Places data is solid; website content was thin." },
+        assessment: {
+          icpFit: { value: 90, reasoning: "Local HVAC service business, small size — squarely in Hartwich's ICP." },
+          opportunity: { value: 85, reasoning: "3 reviews and 3.2 stars — clear reputation-infrastructure gap." },
+          contactability: { value: 20, reasoning: "No named contact or email found." },
+          businessQuality: { value: 60, reasoning: "Has a website listing real services." },
+          timing: { value: 50, reasoning: "No specific timing evidence either way." },
+          dataConfidence: { value: 70, reasoning: "Places data is solid; website content was thin." },
+        },
       },
     },
   });
@@ -157,7 +159,7 @@ describe("DiscoverResearchQualifyPipeline", () => {
 
     const llmRecords = audit.records.filter((r) => r.agentId !== "discovery_pipeline");
     expect(llmRecords.map((r) => r.agentId).sort()).toEqual(
-      ["prospect_discovery_agent", "qualification_agent", "research_agent"].sort()
+      ["prospect_discovery_agent", "prospect_assessment_agent"].sort()
     );
   });
 
@@ -193,7 +195,7 @@ describe("DiscoverResearchQualifyPipeline", () => {
     // Researched exactly once — for the surviving 3-review company, not the
     // one over the ceiling. That's the point: an out-of-ICP business costs
     // zero research/qualification tokens.
-    const researchRuns = audit.records.filter((r) => r.agentId === "research_agent");
+    const researchRuns = audit.records.filter((r) => r.agentId === "prospect_assessment_agent");
     expect(researchRuns).toHaveLength(1);
 
     // `found` still reports what the search returned, not what survived.

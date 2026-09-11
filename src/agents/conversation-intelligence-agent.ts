@@ -5,7 +5,7 @@ import { AUTONOMY } from "../runtime/autonomy-levels.js";
 /**
  * Conversation Intelligence Agent (SPEC.md §29). Classifies one inbound
  * reply and extracts signals — it does NOT decide what happens next.
- * Same split as Qualification (src/agents/qualification-agent.ts): the
+ * Same split as prospect assessment (src/agents/prospect-assessment-agent.ts): the
  * model reports what it observes, deterministic code
  * (src/outreach/reply-routing.ts) decides the action from that. That
  * split is what keeps "which replies get an autonomous response vs. go to

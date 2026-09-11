@@ -1,7 +1,7 @@
 /**
  * Deterministic qualification scoring (SPEC.md §25, and the original V1
  * spec's §7 numeric detail this repo still follows): the model produces
- * per-dimension sub-scores with reasoning (src/agents/qualification-agent.ts),
+ * per-dimension sub-scores with reasoning (src/agents/prospect-assessment-agent.ts),
  * but the weighted formula that turns those into a final score/tier/status
  * is plain code — "do not let the LLM silently modify the scoring formula."
  */

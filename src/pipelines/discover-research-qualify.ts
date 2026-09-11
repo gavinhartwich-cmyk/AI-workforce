@@ -5,8 +5,7 @@ import { ToolRegistry } from "../runtime/tool-registry.js";
 import type { AuditSink, PolicyEngine } from "../runtime/types.js";
 import { AUTONOMY } from "../runtime/autonomy-levels.js";
 import { prospectDiscoveryAgent } from "../agents/prospect-discovery-agent.js";
-import { researchAgent } from "../agents/research-agent.js";
-import { qualificationAgent } from "../agents/qualification-agent.js";
+import { prospectAssessmentAgent } from "../agents/prospect-assessment-agent.js";
 import {
   computeQualificationScore,
   DEFAULT_QUALIFICATION_CONFIG,
@@ -221,23 +220,22 @@ export class DiscoverResearchQualifyPipeline {
       }
     }
 
-    const researchRun = await this.deps.runtime.run(researchAgent, { place: candidate, websiteText });
-    if (researchRun.status !== "succeeded") {
+    // One call, not two. The old research -> qualification chain re-sent the
+    // Places data and the whole research object back in as the second call's
+    // input, paying ~700-1000 tokens per candidate to restate what the model
+    // had just produced (2026-09-11).
+    const assessmentRun = await this.deps.runtime.run(prospectAssessmentAgent, {
+      place: candidate,
+      websiteText,
+    });
+    if (assessmentRun.status !== "succeeded") {
       throw new Error(
-        `Research Agent ${researchRun.status}: ${researchRun.status === "denied" ? researchRun.reason : researchRun.error}`
-      );
-    }
-    const research = researchRun.output;
-
-    const qualificationRun = await this.deps.runtime.run(qualificationAgent, { place: candidate, research });
-    if (qualificationRun.status !== "succeeded") {
-      throw new Error(
-        `Qualification Agent ${qualificationRun.status}: ${
-          qualificationRun.status === "denied" ? qualificationRun.reason : qualificationRun.error
+        `Prospect Assessment Agent ${assessmentRun.status}: ${
+          assessmentRun.status === "denied" ? assessmentRun.reason : assessmentRun.error
         }`
       );
     }
-    const subscores = qualificationRun.output;
+    const { assessment: subscores, ...research } = assessmentRun.output;
 
     // The deterministic step (SPEC.md §10/§25) — the model above never sees
     // or sets this formula.
