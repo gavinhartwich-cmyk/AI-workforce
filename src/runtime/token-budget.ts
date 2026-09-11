@@ -1,7 +1,7 @@
 import { gte, sql } from "drizzle-orm";
 import { getDb } from "../db/client.js";
 import { groqTokenEvents } from "../db/schema.js";
-import type { ModelUsage } from "./types.js";
+import type { CallAttribution, ModelUsage } from "./types.js";
 
 /**
  * The agents' share of Groq's free-tier daily token allowance.
@@ -36,6 +36,15 @@ export function utcDateKey(at: Date = new Date()): string {
   return at.toISOString().slice(0, 10);
 }
 
+export type AgentTokenSpend = {
+  agentId: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  averagePerCall: number;
+};
+
 export type BudgetState = {
   usedToday: number;
   budget: number;
@@ -44,8 +53,8 @@ export type BudgetState = {
 };
 
 export interface TokenBudget {
-  /** Add a completed call's tokens to today's total. */
-  record(usage: ModelUsage, at?: Date): Promise<void>;
+  /** Add a completed call's tokens to the rolling window, attributed where known. */
+  record(usage: ModelUsage, at?: Date, attribution?: CallAttribution): Promise<void>;
   /** How much of the agents' daily budget is left. */
   state(at?: Date): Promise<BudgetState>;
 }
@@ -56,7 +65,7 @@ export const ROLLING_WINDOW_MS = 24 * 60 * 60 * 1000;
 export class PostgresTokenBudget implements TokenBudget {
   constructor(private budget: number = agentDailyTokenBudget()) {}
 
-  async record(usage: ModelUsage, at: Date = new Date()): Promise<void> {
+  async record(usage: ModelUsage, at: Date = new Date(), attribution?: CallAttribution): Promise<void> {
     const total = usage.inputTokens + usage.outputTokens;
     if (total <= 0) return;
 
@@ -68,6 +77,8 @@ export class PostgresTokenBudget implements TokenBudget {
       at,
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
+      agentId: attribution?.agentId ?? null,
+      runId: attribution?.runId ?? null,
     });
   }
 
@@ -85,6 +96,41 @@ export class PostgresTokenBudget implements TokenBudget {
     const remaining = Math.max(0, this.budget - usedToday);
     return { usedToday, budget: this.budget, remaining, exhausted: remaining <= 0 };
   }
+
+  /**
+   * Token spend per agent over the rolling window — the thing call counts
+   * can't tell you. `callCount` is there to make the per-call average
+   * visible, since that is what decides whether merging two agents into one
+   * call is worth doing.
+   */
+  async byAgent(at: Date = new Date()): Promise<AgentTokenSpend[]> {
+    const db = getDb();
+    const since = new Date(at.getTime() - ROLLING_WINDOW_MS);
+    const rows = await db
+      .select({
+        agentId: groqTokenEvents.agentId,
+        calls: sql<number>`count(*)::int`,
+        inputTokens: sql<number>`coalesce(sum(${groqTokenEvents.inputTokens}), 0)::int`,
+        outputTokens: sql<number>`coalesce(sum(${groqTokenEvents.outputTokens}), 0)::int`,
+      })
+      .from(groqTokenEvents)
+      .where(gte(groqTokenEvents.at, since))
+      .groupBy(groqTokenEvents.agentId);
+
+    return rows
+      .map((r) => {
+        const total = r.inputTokens + r.outputTokens;
+        return {
+          agentId: r.agentId ?? "(unattributed)",
+          calls: r.calls,
+          inputTokens: r.inputTokens,
+          outputTokens: r.outputTokens,
+          totalTokens: total,
+          averagePerCall: r.calls > 0 ? Math.round(total / r.calls) : 0,
+        };
+      })
+      .sort((a, b) => b.totalTokens - a.totalTokens);
+  }
 }
 
 /**
@@ -93,6 +139,9 @@ export class PostgresTokenBudget implements TokenBudget {
  */
 export class UnlimitedTokenBudget implements TokenBudget {
   async record(): Promise<void> {}
+  async byAgent(): Promise<AgentTokenSpend[]> {
+    return [];
+  }
   async state(): Promise<BudgetState> {
     return { usedToday: 0, budget: Infinity, remaining: Infinity, exhausted: false };
   }

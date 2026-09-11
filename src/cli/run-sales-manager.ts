@@ -91,7 +91,7 @@ async function main() {
   // Shares the agents' daily budget: an in-authority discovery_increase runs
   // the same real discovery pipeline, so it has to respect the same ceiling.
   const budget = new PostgresTokenBudget();
-  const fast = new GroqProvider({ onUsage: (usage) => budget.record(usage) });
+  const fast = new GroqProvider({ onUsage: (usage, attribution) => budget.record(usage, new Date(), attribution) });
   const strong = process.env.ANTHROPIC_API_KEY ? new AnthropicProvider() : fast;
   const runtime = new AgentRuntime({ modelRouter: new ModelRouter({ fast, strong }), tools, policy, audit });
 

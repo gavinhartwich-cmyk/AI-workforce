@@ -1,6 +1,6 @@
 import Groq from "groq-sdk";
 import type { z } from "zod";
-import type { ModelMessage, ModelProvider, ModelResponse, ModelUsage, StructuredResponse } from "../types.js";
+import type { CallAttribution, ModelMessage, ModelProvider, ModelResponse, ModelUsage, StructuredResponse } from "../types.js";
 
 /**
  * "Fast" lane provider (spec §36) — classification, extraction,
@@ -15,7 +15,7 @@ export class GroqProvider implements ModelProvider {
   private client: Groq;
   private model: string;
   private maxRateLimitRetries: number;
-  private onUsage?: (usage: ModelUsage) => void | Promise<void>;
+  private onUsage?: (usage: ModelUsage, attribution?: CallAttribution) => void | Promise<void>;
 
   constructor(opts?: {
     apiKey?: string;
@@ -27,7 +27,7 @@ export class GroqProvider implements ModelProvider {
      * stays infrastructure-free (and unit-testable) — the CLI entrypoints
      * wire it to the token ledger. See src/runtime/token-budget.ts.
      */
-    onUsage?: (usage: ModelUsage) => void | Promise<void>;
+    onUsage?: (usage: ModelUsage, attribution?: CallAttribution) => void | Promise<void>;
   }) {
     // Matches hartwich-os's own groq.ts: construct safely even with no key
     // set yet (Groq's SDK throws at construction on `undefined`), fail the
@@ -38,10 +38,10 @@ export class GroqProvider implements ModelProvider {
     this.onUsage = opts?.onUsage;
   }
 
-  private async reportUsage(usage: ModelUsage): Promise<void> {
+  private async reportUsage(usage: ModelUsage, attribution?: CallAttribution): Promise<void> {
     if (!this.onUsage) return;
     try {
-      await this.onUsage(usage);
+      await this.onUsage(usage, attribution);
     } catch (err) {
       // Losing a ledger write must never fail the actual agent call — the
       // budget is a guardrail, not the work itself.
@@ -49,7 +49,7 @@ export class GroqProvider implements ModelProvider {
     }
   }
 
-  async generate(input: { messages: ModelMessage[]; maxTokens?: number }): Promise<ModelResponse> {
+  async generate(input: { messages: ModelMessage[]; maxTokens?: number; attribution?: CallAttribution }): Promise<ModelResponse> {
     const response = await this.completionWithRetry({
       messages: input.messages,
       maxTokens: input.maxTokens ?? 1024,
@@ -58,7 +58,7 @@ export class GroqProvider implements ModelProvider {
       inputTokens: response.usage?.prompt_tokens ?? 0,
       outputTokens: response.usage?.completion_tokens ?? 0,
     };
-    await this.reportUsage(usage);
+    await this.reportUsage(usage, input.attribution);
     return {
       content: response.choices[0]?.message?.content ?? "",
       usage,
@@ -72,6 +72,7 @@ export class GroqProvider implements ModelProvider {
     jsonSchema: Record<string, unknown>;
     zodSchema: z.ZodType<T>;
     maxTokens?: number;
+    attribution?: CallAttribution;
   }): Promise<StructuredResponse<T>> {
     const response = await this.completionWithRetry({
       messages: input.messages,
@@ -88,7 +89,7 @@ export class GroqProvider implements ModelProvider {
     };
     // Recorded before the parse/validation checks below: the tokens were
     // spent whether or not the response turns out to be usable.
-    await this.reportUsage(usage);
+    await this.reportUsage(usage, input.attribution);
 
     const content = response.choices[0]?.message?.content;
     if (!content) throw new Error("Groq returned no content");

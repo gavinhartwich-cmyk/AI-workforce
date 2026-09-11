@@ -22,7 +22,8 @@
     "cycle:manager": "tsx src/cli/run-sales-manager.ts",
     "outreach:control": "tsx src/cli/outreach-control.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "tokens": "tsx src/cli/token-report.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

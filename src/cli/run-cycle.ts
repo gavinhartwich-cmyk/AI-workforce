@@ -133,7 +133,7 @@ async function main() {
   const policy = new DefaultPolicyEngine(DEFAULT_POLICY_RULES);
   const audit = new PostgresAuditSink();
   const budget = new PostgresTokenBudget();
-  const fast = new GroqProvider({ onUsage: (usage) => budget.record(usage) });
+  const fast = new GroqProvider({ onUsage: (usage, attribution) => budget.record(usage, new Date(), attribution) });
   const strong = process.env.ANTHROPIC_API_KEY ? new AnthropicProvider() : fast;
   const runtime = new AgentRuntime({ modelRouter: new ModelRouter({ fast, strong }), tools, policy, audit });
 

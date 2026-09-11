@@ -79,6 +79,11 @@ export class AgentRuntime {
         jsonSchema,
         zodSchema: agent.outputSchema as z.ZodType<unknown>,
         maxTokens: agent.maxOutputTokens,
+        // Carried so the token ledger can say which agent spent what —
+        // agent_runs and groq_token_events shared no key before this, and
+        // call counts are a poor proxy for cost between agents whose
+        // prompts differ by an order of magnitude in size.
+        attribution: { agentId: agent.id, runId },
       });
 
       // 4. Schema Validation — structuredGenerate already validated against

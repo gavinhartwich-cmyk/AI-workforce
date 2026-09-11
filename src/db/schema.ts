@@ -391,4 +391,18 @@ export const groqTokenEvents = pgTable("groq_token_events", {
   at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
   inputTokens: integer("input_tokens").notNull().default(0),
   outputTokens: integer("output_tokens").notNull().default(0),
+  /**
+   * Which agent spent these tokens, and the agent_runs row it belongs to.
+   *
+   * Nullable because the budget must keep counting every call for the
+   * ceiling to be correct, including any made outside AgentRuntime — an
+   * unattributed call is still real spend. But without these, agent_runs
+   * (which agent, did it succeed) and this table (how many tokens, when)
+   * share no key at all, so "which agent costs what" can't be answered.
+   * Call counts don't substitute: research_agent sends scraped page text at
+   * a 2048-token ceiling while qualification_agent sends compact structured
+   * input, and their per-call cost differs several-fold.
+   */
+  agentId: text("agent_id"),
+  runId: uuid("run_id"),
 });

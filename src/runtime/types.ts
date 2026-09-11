@@ -19,6 +19,21 @@ export type ModelMessage = { role: "system" | "user" | "assistant"; content: str
 
 export type ModelUsage = { inputTokens: number; outputTokens: number };
 
+/**
+ * Who made a model call, carried alongside it so token spend can be
+ * attributed.
+ *
+ * Without this, `agent_runs` knows which agent ran and `groq_token_events`
+ * knows how many tokens were spent, but the two share no key — so "which
+ * agent costs what" is unanswerable, and call counts are a poor stand-in
+ * (research_agent sends scraped page text at a 2048-token ceiling;
+ * qualification_agent sends compact structured input, and their per-call
+ * cost differs by several times). Optional because the provider must keep
+ * counting every call for the budget, including any made outside the
+ * runtime; attribution is a bonus, never a requirement.
+ */
+export type CallAttribution = { agentId: string; runId?: string };
+
 export type ModelResponse = {
   content: string;
   usage: ModelUsage;
@@ -40,13 +55,14 @@ export type StructuredResponse<T> = {
  */
 export interface ModelProvider {
   readonly id: string;
-  generate(input: { messages: ModelMessage[]; maxTokens?: number }): Promise<ModelResponse>;
+  generate(input: { messages: ModelMessage[]; maxTokens?: number; attribution?: CallAttribution }): Promise<ModelResponse>;
   structuredGenerate<T>(input: {
     messages: ModelMessage[];
     schemaName: string;
     jsonSchema: Record<string, unknown>;
     zodSchema: z.ZodType<T>;
     maxTokens?: number;
+    attribution?: CallAttribution;
   }): Promise<StructuredResponse<T>>;
 }
 
