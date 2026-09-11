@@ -18,7 +18,7 @@ import { generateInterventionOptions } from "./intervention-generator.js";
 import { checkAuthority, DEFAULT_AUTHORITY_POLICIES } from "./authority-policy.js";
 import type { AuthorityPolicy, InterventionCandidate, WorkIntensity } from "./types.js";
 import type { ExperimentStore } from "../experiments/experiment-store.js";
-import type { EscalationStore } from "./escalation-store.js";
+import type { EscalationStore, ManagerEscalation } from "./escalation-store.js";
 import type { DiscoverResearchQualifyInput, PipelineSummary } from "../pipelines/discover-research-qualify.js";
 import { currentDiscoveryTargets, AREAS_PER_CYCLE, BASE_DISCOVERY_VOLUME, type DiscoveryTarget } from "../config/icp-targets.js";
 
@@ -32,7 +32,15 @@ export type ManagerCycleExecution =
   | { kind: "none" }
   | { kind: "discovery_increase"; maxResults: number; runs: { target: DiscoveryTarget; summary: PipelineSummary }[] }
   | { kind: "experiment_created"; experimentId: string; name: string }
-  | { kind: "escalated"; reason: string };
+  | { kind: "escalated"; reason: string }
+  /**
+   * The same decision is already in front of Gavin, so nothing was raised
+   * this cycle. Distinct from "escalated" because conflating them made the
+   * decision log claim it escalated 32 times when it escalated once — the
+   * dashboard's recent-decisions list showed eight identical "Escalate to
+   * Gavin" rows and read as if it were still spamming (Gavin, 2026-09-11).
+   */
+  | { kind: "awaiting_decision"; escalationId: string; since: Date; status: string };
 
 export type ManagerCycleResult = {
   goalId: string;
@@ -188,10 +196,21 @@ export class SalesManager {
         const reason = authority.allowed
           ? `An experiment is already running for the ${fromStage} → ${toStage} step — waiting for it to reach a conclusive sample size instead of starting another.`
           : authority.reason;
-        selectedAction = `Escalate to Gavin — "${primary.action}" needs a human decision (${reason}).`;
-        expectedOutcome = "n/a until Gavin decides — no autonomous action was taken this cycle.";
-        await this.escalate(report, primary, reason, now);
-        execution = { kind: "escalated", reason };
+        const outcome = await this.escalate(report, primary, reason, now);
+
+        if (outcome.raised) {
+          selectedAction = `Escalate to Gavin — "${primary.action}" needs a human decision (${reason}).`;
+          expectedOutcome = "n/a until Gavin decides — no autonomous action was taken this cycle.";
+          execution = { kind: "escalated", reason };
+        } else {
+          // Say what actually happened. Wording a suppressed cycle as another
+          // escalation is how the log came to show 32 of them when one was
+          // ever raised.
+          const open = outcome.blocking;
+          selectedAction = `Waiting on Gavin — "${primary.action}" was escalated ${formatUtcMinute(open.createdAt)} and is still ${open.status}; not re-raised this cycle.`;
+          expectedOutcome = "n/a — the existing escalation is still open; nothing new was raised or sent.";
+          execution = { kind: "awaiting_decision", escalationId: open.id, since: open.createdAt, status: open.status };
+        }
         recordedOptions = [
           primary,
           { action: "Escalate to Gavin", expectedImpact: primary.expectedImpact, confidence: 0.5, risk: 0.05 },
@@ -313,12 +332,17 @@ export class SalesManager {
     }
   }
 
+  /**
+   * Raises an escalation, or reports the open one that stopped it. The
+   * caller needs to know which actually happened so the decision it records
+   * says so — see the `awaiting_decision` execution kind.
+   */
   private async escalate(
     report: Awaited<ReturnType<typeof getGoalStatusReport>>,
     candidate: InterventionCandidate,
     whyApprovalRequired: string,
     now: Date
-  ): Promise<void> {
+  ): Promise<{ raised: true } | { raised: false; blocking: ManagerEscalation }> {
     if (this.deps.escalations) {
       // One live ask at a time per goal+capability, plus a cooldown after it
       // settles. Without the cooldown, approving one stopped it being
@@ -330,7 +354,7 @@ export class SalesManager {
         now,
         report.forecast.status
       );
-      if (blocking) return;
+      if (blocking) return { raised: false, blocking };
 
       await this.deps.escalations.raise({
         goalId: report.goal.id,
@@ -366,6 +390,8 @@ export class SalesManager {
       dueDate: new Date(now.getTime() + 24 * 60 * 60 * 1000),
       description: `Goal "${report.goal.metric}" (${report.forecast.status}): ${candidate.action} — ${whyApprovalRequired}`,
     });
+
+    return { raised: true };
   }
 
   private invokeTool(toolName: string, toolInput: unknown) {
@@ -386,4 +412,9 @@ export class SalesManager {
       console.error(`${toolName} ${result.status}: ${result.status === "denied" ? result.reason : result.error}`);
     }
   }
+}
+
+/** "2026-09-10 20:38Z" — enough to place a decision without a full ISO string in a log line. */
+function formatUtcMinute(at: Date): string {
+  return `${at.toISOString().slice(0, 16).replace("T", " ")}Z`;
 }

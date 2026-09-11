@@ -345,6 +345,34 @@ describe("SalesManager", () => {
     expect(writeStore.tasksCreated).toHaveLength(1);
   });
 
+  it("records 'waiting', not another escalation, on a suppressed cycle", async () => {
+    // The log used to word every suppressed cycle as "Escalate to Gavin",
+    // so the dashboard showed the same escalation 32 times and read as if
+    // it were still spamming — when it had escalated exactly once.
+    const escalations = new FakeEscalationStore();
+    const { manager, decisions, gmailSender } = buildManager({
+      goals: [buildGoal({ target: 1000 })],
+      funnelCounts: { prospects: 100, qualified: 50, won: 0, wonValue: 0 },
+      escalations,
+    });
+
+    const first = await manager.runCycle("goal-1", AS_OF);
+    const second = await manager.runCycle("goal-1", AS_OF);
+    const third = await manager.runCycle("goal-1", AS_OF);
+
+    expect(first.execution.kind).toBe("escalated");
+    expect(second.execution.kind).toBe("awaiting_decision");
+    expect(third.execution.kind).toBe("awaiting_decision");
+
+    expect(decisions.records[0].selectedAction).toMatch(/^Escalate to Gavin/);
+    expect(decisions.records[1].selectedAction).toMatch(/^Waiting on Gavin/);
+    expect(decisions.records[1].selectedAction).toMatch(/not re-raised/);
+
+    // One escalation, one email — however many cycles run.
+    expect(escalations.raised).toHaveLength(1);
+    expect(gmailSender.sent).toHaveLength(1);
+  });
+
   it("carries out an approved escalation at the percentage Gavin approved", async () => {
     const approved: ManagerEscalation = {
       id: "esc-approved",
