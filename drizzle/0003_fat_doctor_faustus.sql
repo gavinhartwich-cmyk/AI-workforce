@@ -1,0 +1,1 @@
+ALTER TABLE "manager_escalations" ADD COLUMN "forecast_status" text;

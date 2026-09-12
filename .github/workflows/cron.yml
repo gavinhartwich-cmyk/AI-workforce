@@ -1,0 +1,110 @@
+name: AI workforce cycle
+
+# Two schedules, two jobs, deliberately decoupled (Gavin, 2026-09-10):
+#
+#  - full-cycle (npm run cycle, hourly): Discovery -> Outreach -> Follow-
+#    Ups -> Replies -> Sales Manager. Discovery/Research/Qualification are
+#    real Groq calls per candidate — this is the token-hungry stage.
+#  - sales-manager (npm run cycle:manager, every 15 min): just
+#    SalesManager.runAll(), which is deliberately LLM-free (arithmetic
+#    over real KPI data, spec'd that way since Phase 9) and costs zero
+#    Groq tokens on a normal cycle — a goal set through the Sales Manager
+#    chat gets reacted to fast without waiting on the heavy stage.
+#
+# They were briefly one hourly job, then briefly both on the same */15
+# schedule — the latter meant Discovery re-ran every 15 minutes too,
+# which exhausted Groq's free-tier daily token cap (200k TPD) by early
+# afternoon and then sat failing with 429s for the rest of the day on
+# every subsequent run. Splitting them fixes both: the Manager reacts
+# fast (its own loop is free either way), and Discovery stays on a
+# schedule its actual token budget can sustain for a full day.
+#
+# Every store/tool this hits is already real (Postgres/Gmail/Places) —
+# the guardrails that make frequent runs safe (opt-out, the outreach-control
+# kill switch, send-window, per-account warm-up caps) live *inside* the
+# app (src/outreach/*), not in this schedule, so they still apply no
+# matter how often either fires.
+#
+# Required repository secrets — one per non-empty line in .env.example:
+# AGENT_DATABASE_URL, HARTWICH_DATABASE_URL, GOOGLE_PLACES_API_KEY,
+# GROQ_API_KEY, GROQ_MODEL, ANTHROPIC_API_KEY, ANTHROPIC_MODEL,
+# GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_ACCESS_TOKEN_1..3,
+# GMAIL_REFRESH_TOKEN_1..3, GMAIL_FROM_ADDRESS_1..3, HARTWICH_APP_URL,
+# GAVIN_EMAIL.
+
+on:
+  schedule:
+    - cron: "0 * * * *" # hourly — full-cycle
+    - cron: "*/15 * * * *" # every 15 minutes — sales-manager (also fires on the hour; full-cycle handles that one)
+  workflow_dispatch: {} # manual run from the Actions tab — runs both jobs
+
+jobs:
+  full-cycle:
+    if: github.event.schedule == '0 * * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: ai-workforce-full-cycle
+      cancel-in-progress: false # let a running cycle finish; never run two at once
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run cycle
+        env:
+          AGENT_DATABASE_URL: ${{ secrets.AGENT_DATABASE_URL }}
+          HARTWICH_DATABASE_URL: ${{ secrets.HARTWICH_DATABASE_URL }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_MODEL: ${{ secrets.GROQ_MODEL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ secrets.ANTHROPIC_MODEL }}
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_ACCESS_TOKEN_1: ${{ secrets.GMAIL_ACCESS_TOKEN_1 }}
+          GMAIL_REFRESH_TOKEN_1: ${{ secrets.GMAIL_REFRESH_TOKEN_1 }}
+          GMAIL_FROM_ADDRESS_1: ${{ secrets.GMAIL_FROM_ADDRESS_1 }}
+          GMAIL_ACCESS_TOKEN_2: ${{ secrets.GMAIL_ACCESS_TOKEN_2 }}
+          GMAIL_REFRESH_TOKEN_2: ${{ secrets.GMAIL_REFRESH_TOKEN_2 }}
+          GMAIL_FROM_ADDRESS_2: ${{ secrets.GMAIL_FROM_ADDRESS_2 }}
+          GMAIL_ACCESS_TOKEN_3: ${{ secrets.GMAIL_ACCESS_TOKEN_3 }}
+          GMAIL_REFRESH_TOKEN_3: ${{ secrets.GMAIL_REFRESH_TOKEN_3 }}
+          GMAIL_FROM_ADDRESS_3: ${{ secrets.GMAIL_FROM_ADDRESS_3 }}
+          HARTWICH_APP_URL: ${{ secrets.HARTWICH_APP_URL }}
+          GAVIN_EMAIL: ${{ secrets.GAVIN_EMAIL }}
+
+  sales-manager:
+    if: github.event.schedule == '*/15 * * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: ai-workforce-sales-manager
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run cycle:manager
+        env:
+          AGENT_DATABASE_URL: ${{ secrets.AGENT_DATABASE_URL }}
+          HARTWICH_DATABASE_URL: ${{ secrets.HARTWICH_DATABASE_URL }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_MODEL: ${{ secrets.GROQ_MODEL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ secrets.ANTHROPIC_MODEL }}
+          # notify_gavin (src/tools/notify-gavin.ts) always sends from
+          # account index 0 — only that account's credentials are needed
+          # here, not all three (this job never sends outreach).
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_ACCESS_TOKEN_1: ${{ secrets.GMAIL_ACCESS_TOKEN_1 }}
+          GMAIL_REFRESH_TOKEN_1: ${{ secrets.GMAIL_REFRESH_TOKEN_1 }}
+          GMAIL_FROM_ADDRESS_1: ${{ secrets.GMAIL_FROM_ADDRESS_1 }}
+          GAVIN_EMAIL: ${{ secrets.GAVIN_EMAIL }}
