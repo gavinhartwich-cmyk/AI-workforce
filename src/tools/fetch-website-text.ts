@@ -8,7 +8,31 @@ export type WebsiteFetchResult = {
   fallbackEmail: string | null; // deterministic mailto:/regex scrape, independent of any LLM read
 };
 
-const MAX_TEXT_CHARS = 15_000;
+/**
+ * How much scraped page text is handed to the model.
+ *
+ * Was 15,000 — roughly 3,750 tokens, which measurement showed was
+ * essentially the entire per-candidate cost: prospect_assessment_agent came
+ * in at 3,645 tokens per call on 2026-09-12, and 17 candidates in one cycle
+ * burned 62k of a 160k daily budget. The page text IS the cost; the number
+ * of agent calls never was. Merging research and qualification into one
+ * call turned out roughly cost-neutral for exactly this reason.
+ *
+ * 4,000 chars is about a screenful of real copy, which is where the signals
+ * this pipeline actually needs live — services offered, apparent size, a
+ * named contact, how the business talks about reviews. The remaining 11k
+ * was mostly navigation, footers and boilerplate, which `stripBoilerplate`
+ * below now removes before the cap is even applied.
+ *
+ * Overridable so the ceiling can be tuned against real token-per-call
+ * numbers (npm run tokens) without a redeploy.
+ */
+const DEFAULT_MAX_TEXT_CHARS = 4_000;
+
+function maxTextChars(): number {
+  const raw = Number(process.env.WEBSITE_TEXT_MAX_CHARS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_TEXT_CHARS;
+}
 
 // Same third-party-noise domain list as hartwich-os's own
 // extractFallbackEmail (src/lib/ai/enrich-company.ts) — widget vendors,
@@ -30,10 +54,29 @@ const IGNORED_EMAIL_DOMAINS = new Set([
   "domain.com",
 ]);
 
-function stripHtml(html: string): string {
+/**
+ * Drops the parts of a page that are never about this business in
+ * particular — navigation, headers, footers, cookie banners, inline SVG —
+ * before any truncation happens.
+ *
+ * Order matters: cutting boilerplate first means the character cap spends
+ * itself on real copy rather than on a nav menu that happened to come first
+ * in the document.
+ */
+function stripBoilerplate(html: string): string {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
+    .replace(/<nav[\s\S]*?<\/nav>/gi, " ")
+    .replace(/<header[\s\S]*?<\/header>/gi, " ")
+    .replace(/<footer[\s\S]*?<\/footer>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ");
+}
+
+function stripHtml(html: string): string {
+  return stripBoilerplate(html)
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/gi, " ")
     .replace(/\s+/g, " ")
@@ -99,7 +142,7 @@ export function createFetchWebsiteTextTool(
       }
 
       const fallbackEmail = extractFallbackEmail(html, input.website);
-      const text = stripHtml(html).slice(0, MAX_TEXT_CHARS);
+      const text = stripHtml(html).slice(0, maxTextChars());
       return { text: text || null, fallbackEmail };
     },
   };
