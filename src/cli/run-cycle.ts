@@ -47,6 +47,7 @@ import { createRecordInboundReplyTool } from "../tools/record-inbound-reply.js";
 import { createCloseDealLostTool } from "../tools/close-deal-lost.js";
 import { createAppendCompanyNoteTool } from "../tools/append-company-note.js";
 import { createFlagDealForReviewTool } from "../tools/flag-deal-for-review.js";
+import { createMarkMessageBouncedTool } from "../tools/mark-message-bounced.js";
 import { createCreateEscalationTaskTool } from "../tools/create-escalation-task.js";
 import { createNotifyGavinTool } from "../tools/notify-gavin.js";
 import { createGetNewLeadCandidatesTool, defaultList as listNewLeadCandidates } from "../tools/get-new-lead-candidates.js";
@@ -126,6 +127,7 @@ async function main() {
     .register(createCloseDealLostTool())
     .register(createAppendCompanyNoteTool())
     .register(createFlagDealForReviewTool())
+    .register(createMarkMessageBouncedTool())
     .register(createCreateEscalationTaskTool())
     .register(createNotifyGavinTool())
     .register(createGetNewLeadCandidatesTool());

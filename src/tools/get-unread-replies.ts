@@ -12,6 +12,8 @@ export type MatchedReply = {
   gmailMessageId: string;
   threadId: string;
   fromAddress: string;
+  /** The inbound message's OWN subject line — distinct from originalSubject (what WE sent). Needed to recognize a bounce ("Delivery Status Notification..."). */
+  subject: string;
   rfc822MessageId: string | null;
   bodyText: string;
   companyId: string;
@@ -20,6 +22,20 @@ export type MatchedReply = {
   company: { name: string; website: string | null };
   contact: { name: string | null; title: string | null } | null;
   originalSubject: string;
+  /** The id of OUR most recent sent message in this thread — what a detected bounce gets marked against. */
+  sentMessageId: string;
+  /**
+   * True when this exact Gmail message was already recorded as an
+   * activity on a previous poll — Gmail still shows it unread (see
+   * GAP_ANALYSIS: the OAuth grant for these 3 accounts is missing the
+   * `gmail.modify` scope, so mark_email_read's API call 403s every time
+   * and never actually clears the UNREAD label). Without this check the
+   * same message — most often a bounce — gets re-recorded as a brand-new
+   * "reply" on every single cron cycle forever. The pipeline must treat
+   * this as a no-op regardless of whether the read-marking ever starts
+   * working; this is the real fix, not a workaround for the scope issue.
+   */
+  alreadyRecorded: boolean;
 };
 
 /**
@@ -33,7 +49,13 @@ export type MatchedReply = {
  */
 export function createGetUnreadRepliesTool(
   reader: GmailReader = new GoogleGmailReader(),
-  matchThread: (threadId: string) => Promise<Omit<MatchedReply, "accountIndex" | "gmailMessageId" | "threadId" | "fromAddress" | "rfc822MessageId" | "bodyText"> | null> = defaultMatchThread
+  matchThread: (
+    threadId: string
+  ) => Promise<Omit<
+    MatchedReply,
+    "accountIndex" | "gmailMessageId" | "threadId" | "fromAddress" | "subject" | "rfc822MessageId" | "bodyText" | "alreadyRecorded"
+  > | null> = defaultMatchThread,
+  wasAlreadyRecorded: (gmailMessageId: string) => Promise<boolean> = defaultWasAlreadyRecorded
 ): ToolDefinition<Record<string, never>, MatchedReply[]> {
   return {
     name: "get_unread_replies",
@@ -54,8 +76,10 @@ export function createGetUnreadRepliesTool(
             gmailMessageId: ref.id,
             threadId: ref.threadId,
             fromAddress: extractFromAddress(full),
+            subject: extractHeader(full, "Subject") ?? "",
             rfc822MessageId: extractHeader(full, "Message-Id"),
             bodyText: extractPlainTextBody(full) ?? "",
+            alreadyRecorded: await wasAlreadyRecorded(ref.id),
             ...matched,
           });
         }
@@ -89,5 +113,15 @@ async function defaultMatchThread(threadId: string) {
     company: { name: company.name, website: company.website },
     contact: contact ? { name: contact.name, title: contact.title } : null,
     originalSubject: sent.subject ?? "",
+    sentMessageId: sent.id,
   };
+}
+
+/** A Gmail message we've already turned into an activity once — Gmail still calling it unread (scope issue, see MatchedReply's own doc) doesn't make it new. */
+async function defaultWasAlreadyRecorded(gmailMessageId: string): Promise<boolean> {
+  const db = getHartwichOsDb();
+  const existing = await db.query.messages.findFirst({
+    where: and(eq(messages.provider, "gmail"), eq(messages.providerMessageId, gmailMessageId)),
+  });
+  return !!existing;
 }

@@ -596,6 +596,42 @@ describe("SalesManager", () => {
     expect(row.executionNote).toMatch(/No executor wired/);
   });
 
+  it("executes an approved create_controlled_experiment escalation instead of failing with 'no executor wired'", async () => {
+    // Regression test: this capability had no executor at all — every
+    // approval immediately failed, then re-raised the identical ask every
+    // FAILED_COOLDOWN_MS (6h) forever. The action text's exact wording is
+    // what the real executor parses to recover which stage this was for.
+    const approved: ManagerEscalation = {
+      id: "esc-experiment",
+      goalId: "goal-1",
+      capability: "create_controlled_experiment",
+      proposedChangePercent: null,
+      action: "Start a controlled experiment testing an alternate outreach approach at the contacted → engaged step.",
+      diagnosis: "d",
+      whyApprovalRequired: "An experiment is already running for this step.",
+      forecastStatus: "CRITICAL",
+      expectedImpact: 0.5,
+      risk: 0.2,
+      status: "approved",
+      executionNote: null,
+      executionAttempts: 0,
+      createdAt: AS_OF,
+      decidedAt: AS_OF,
+      executedAt: null,
+    };
+    const escalations = new FakeEscalationStore([approved]);
+    const experiments = new FakeExperimentStore();
+    const { manager } = buildManager({ goals: [buildGoal({ target: 1 })], escalations, experiments });
+
+    await manager.runAll(AS_OF);
+
+    const row = escalations.raised.find((e) => e.id === "esc-experiment")!;
+    expect(row.status).toBe("executed");
+    expect(row.executionNote).toMatch(/Created experiment/);
+    expect(experiments.experiments).toHaveLength(1);
+    expect(experiments.experiments[0].name).toBe("Outreach experiment: contacted->engaged");
+  });
+
   it("starts a controlled experiment for a downstream conversion bottleneck", async () => {
     const { manager, experiments, gmailSender } = buildManager({
       goals: [buildGoal({ target: 10 })],

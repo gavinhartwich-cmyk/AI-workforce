@@ -10,6 +10,7 @@ import type {
   RecordInboundReplyResult,
   CreateTaskInput,
   CreateTaskResult,
+  MarkMessageBouncedInput,
 } from "./write-store.js";
 
 /**
@@ -43,5 +44,8 @@ export class NotImplementedWriteStore implements HartwichWriteStore {
   }
   async appendCompanyNote(_companyId: string, _note: string): Promise<void> {
     throw new Error("appendCompanyNote: not implemented by this fake");
+  }
+  async markMessageBounced(_input: MarkMessageBouncedInput): Promise<void> {
+    throw new Error("markMessageBounced: not implemented by this fake");
   }
 }

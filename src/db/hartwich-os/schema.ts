@@ -141,6 +141,12 @@ export const messages = pgTable("messages", {
   subject: text("subject"),
   body: text("body"),
   generatedByAi: boolean("generated_by_ai").notNull().default(false),
+  // Bounce tracking (hartwich-os's own v1.1 columns) — see
+  // src/outreach/bounce-detection.ts and write-store.ts's
+  // markMessageBounced: set once a Delivery Status Notification is
+  // recognized, so a bounce is never mistaken for a genuine reply.
+  bouncedAt: timestamp("bounced_at", { withTimezone: true }),
+  bounceReason: text("bounce_reason"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

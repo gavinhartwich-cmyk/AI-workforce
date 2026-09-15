@@ -55,4 +55,5 @@ export const DEFAULT_POLICY_RULES: PolicyRule[] = [
   { tool: "notify_gavin", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
   { tool: "create_escalation_task", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
   { tool: "append_company_note", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
+  { tool: "mark_message_bounced", minAutonomyLevel: AUTONOMY.AUTONOMOUS_ROUTINE },
 ];

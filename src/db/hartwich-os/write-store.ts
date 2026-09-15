@@ -89,6 +89,11 @@ export type CreateTaskInput = {
 
 export type CreateTaskResult = { taskId: string };
 
+export type MarkMessageBouncedInput = {
+  messageId: string;
+  reason: string;
+};
+
 /**
  * `actor` on every method below is which of THIS repo's agents or
  * pipelines is acting — always a tool's `ctx.agentId` (runtime-supplied,
@@ -111,6 +116,7 @@ export interface HartwichWriteStore {
   flagDealForReview(dealId: string, actor: string): Promise<void>;
   createTask(input: CreateTaskInput, actor: string): Promise<CreateTaskResult>;
   appendCompanyNote(companyId: string, note: string, actor: string): Promise<void>;
+  markMessageBounced(input: MarkMessageBouncedInput, actor: string): Promise<void>;
 }
 
 /** Shape of one audit_log row's `diff` column — every write-store method builds one of these. */
@@ -476,6 +482,29 @@ export class PostgresHartwichWriteStore implements HartwichWriteStore {
         entityType: "deal",
         entityId: dealId,
         diff: auditDiff(actor),
+      });
+    });
+  }
+
+  /**
+   * A detected bounce (src/outreach/bounce-detection.ts) — marks OUR sent
+   * message, never the deal's stage. This is deliberately the only thing
+   * a bounce touches directly; whether to flag the deal for review is the
+   * caller's decision (src/pipelines/handle-inbound-replies.ts), same
+   * separation flagDealForReview above already has from recordInboundReply.
+   */
+  async markMessageBounced(input: MarkMessageBouncedInput, actor: string): Promise<void> {
+    const db = getHartwichOsDb();
+    await db.transaction(async (tx) => {
+      await tx
+        .update(messages)
+        .set({ status: "bounced", bouncedAt: new Date(), bounceReason: input.reason.slice(0, 2000) })
+        .where(eq(messages.id, input.messageId));
+      await tx.insert(auditLog).values({
+        action: "email.bounced",
+        entityType: "message",
+        entityId: input.messageId,
+        diff: auditDiff(actor, { reason: input.reason.slice(0, 500) }),
       });
     });
   }

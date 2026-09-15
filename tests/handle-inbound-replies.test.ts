@@ -16,9 +16,10 @@ import { createSendEmailTool } from "../src/tools/send-email.js";
 import { createRecordOutboundEmailTool } from "../src/tools/record-outbound-email.js";
 import { createCreateEscalationTaskTool } from "../src/tools/create-escalation-task.js";
 import { createAppendCompanyNoteTool } from "../src/tools/append-company-note.js";
+import { createMarkMessageBouncedTool } from "../src/tools/mark-message-bounced.js";
 import type { GmailReader, GmailSender, SendEmailInput, SendEmailResult, UnreadMessageRef } from "../src/integrations/gmail.js";
 import { NotImplementedWriteStore } from "../src/db/hartwich-os/write-store-stub.js";
-import type { RecordInboundReplyInput, RecordOutboundEmailInput, CreateTaskInput } from "../src/db/hartwich-os/write-store.js";
+import type { RecordInboundReplyInput, RecordOutboundEmailInput, CreateTaskInput, MarkMessageBouncedInput } from "../src/db/hartwich-os/write-store.js";
 import type { OptOutStore } from "../src/outreach/opt-out-store.js";
 import type { OutreachControlStore } from "../src/outreach/outreach-control-store.js";
 import type { EmailAccountsStore, EmailAccountState } from "../src/db/hartwich-os/email-accounts-store.js";
@@ -27,16 +28,21 @@ import { HandleInboundRepliesPipeline } from "../src/pipelines/handle-inbound-re
 const COMPANY_ID = "11111111-1111-4111-8111-111111111111";
 const CONTACT_ID = "22222222-2222-4222-8222-222222222222";
 const DEAL_ID = "33333333-3333-4333-8333-333333333333";
+const SENT_MESSAGE_ID = "44444444-4444-4444-8444-444444444444";
 const WEEKDAY_BUSINESS_HOURS = new Date("2026-01-07T16:00:00Z"); // Wed 10am Winnipeg
 
-function buildGmailMessage(replyText: string): gmail_v1.Schema$Message {
+function buildGmailMessage(
+  replyText: string,
+  overrides: { fromAddress?: string; subject?: string } = {}
+): gmail_v1.Schema$Message {
   return {
     id: "gmail-msg-1",
     threadId: "thread-1",
     payload: {
       headers: [
-        { name: "From", value: "Prospect <info@example-hvac.test>" },
+        { name: "From", value: overrides.fromAddress ?? "Prospect <info@example-hvac.test>" },
         { name: "Message-Id", value: "<reply-1@mail.gmail.com>" },
+        { name: "Subject", value: overrides.subject ?? "Re: Quick note about your reviews" },
       ],
       mimeType: "text/plain",
       body: { data: Buffer.from(replyText).toString("base64url") },
@@ -46,12 +52,15 @@ function buildGmailMessage(replyText: string): gmail_v1.Schema$Message {
 
 class FakeGmailReader implements GmailReader {
   markedRead: { accountIndex: number; messageId: string }[] = [];
-  constructor(private replyText: string) {}
+  constructor(
+    private replyText: string,
+    private overrides: { fromAddress?: string; subject?: string } = {}
+  ) {}
   async listUnread(accountIndex: 0 | 1 | 2): Promise<UnreadMessageRef[]> {
     return accountIndex === 0 ? [{ id: "gmail-msg-1", threadId: "thread-1" }] : [];
   }
   async getMessage(): Promise<gmail_v1.Schema$Message> {
-    return buildGmailMessage(this.replyText);
+    return buildGmailMessage(this.replyText, this.overrides);
   }
   async markRead(accountIndex: 0 | 1 | 2, messageId: string): Promise<void> {
     this.markedRead.push({ accountIndex, messageId });
@@ -73,6 +82,7 @@ class FakeWriteStore extends NotImplementedWriteStore {
   flaggedDealIds: string[] = [];
   tasksCreated: CreateTaskInput[] = [];
   notesAppended: { companyId: string; note: string }[] = [];
+  messagesBounced: MarkMessageBouncedInput[] = [];
   async recordInboundReply(input: RecordInboundReplyInput) {
     this.inboundRecorded.push(input);
     return { activityId: "inbound-activity-1", messageId: "inbound-message-1" };
@@ -94,7 +104,11 @@ class FakeWriteStore extends NotImplementedWriteStore {
   async appendCompanyNote(companyId: string, note: string) {
     this.notesAppended.push({ companyId, note });
   }
+  async markMessageBounced(input: MarkMessageBouncedInput) {
+    this.messagesBounced.push(input);
+  }
 }
+
 
 class FakeOptOutStore implements OptOutStore {
   suppressed: { email: string; reason: string }[] = [];
@@ -121,8 +135,14 @@ class FakeAccountsStore implements EmailAccountsStore {
   async recordSend() {}
 }
 
-function buildPipeline(opts: { replyText: string; classification: Record<string, unknown> }) {
-  const gmailReader = new FakeGmailReader(opts.replyText);
+function buildPipeline(opts: {
+  replyText: string;
+  classification: Record<string, unknown>;
+  fromAddress?: string;
+  subject?: string;
+  alreadyRecorded?: boolean;
+}) {
+  const gmailReader = new FakeGmailReader(opts.replyText, { fromAddress: opts.fromAddress, subject: opts.subject });
   const gmailSender = new FakeGmailSender();
   const writeStore = new FakeWriteStore();
   const optOuts = new FakeOptOutStore();
@@ -134,10 +154,12 @@ function buildPipeline(opts: { replyText: string; classification: Record<string,
     company: { name: "Example HVAC Co.", website: null },
     contact: { name: null, title: null },
     originalSubject: "Quick note about your reviews",
+    sentMessageId: SENT_MESSAGE_ID,
   });
+  const wasAlreadyRecorded = async () => opts.alreadyRecorded ?? false;
 
   const tools = new ToolRegistry()
-    .register(createGetUnreadRepliesTool(gmailReader, matchThread))
+    .register(createGetUnreadRepliesTool(gmailReader, matchThread, wasAlreadyRecorded))
     .register(createMarkEmailReadTool(gmailReader))
     .register(createRecordInboundReplyTool(writeStore))
     .register(createCloseDealLostTool(writeStore))
@@ -146,7 +168,8 @@ function buildPipeline(opts: { replyText: string; classification: Record<string,
     .register(createSendEmailTool(gmailSender))
     .register(createRecordOutboundEmailTool(writeStore))
     .register(createCreateEscalationTaskTool(writeStore))
-    .register(createAppendCompanyNoteTool(writeStore));
+    .register(createAppendCompanyNoteTool(writeStore))
+    .register(createMarkMessageBouncedTool(writeStore));
 
   const provider = new FakeModelProvider({
     responsesBySchema: {
@@ -286,5 +309,57 @@ describe("HandleInboundRepliesPipeline", () => {
     expect(gmailSender.sent).toHaveLength(0);
     // Still recorded as a real inbound activity, even though no action follows.
     expect(writeStore.inboundRecorded).toHaveLength(1);
+  });
+
+  it("recognizes a bounce and never records it as a reply, escalates, or moves the deal", async () => {
+    const { pipeline, gmailSender, writeStore } = buildPipeline({
+      replyText: "Your message wasn't delivered to info@example-hvac.test because the address couldn't be found.",
+      fromAddress: "Mail Delivery Subsystem <mailer-daemon@googlemail.com>",
+      subject: "Delivery Status Notification (Failure)",
+      // If this were mistakenly classified, it would escalate — proves the bounce check runs first.
+      classification: classificationFixture({ classification: "PRICE" }),
+    });
+
+    const results = await pipeline.runAll(WEEKDAY_BUSINESS_HOURS);
+
+    expect(results[0].outcome).toBe("bounced");
+    expect(writeStore.inboundRecorded).toHaveLength(0); // never treated as a genuine reply
+    expect(writeStore.messagesBounced).toEqual([{ messageId: SENT_MESSAGE_ID, reason: expect.stringContaining("address couldn't be found") }]);
+    expect(writeStore.flaggedDealIds).toEqual([DEAL_ID]);
+    expect(writeStore.notesAppended).toHaveLength(1);
+    expect(writeStore.notesAppended[0].note).toMatch(/bounced/);
+    expect(gmailSender.sent).toHaveLength(0); // no escalation email, no autonomous reply
+  });
+
+  it("doesn't flag a deal for a temporary delivery delay, only the permanent kind", async () => {
+    const { writeStore, pipeline } = buildPipeline({
+      replyText: "Gmail will retry for 46 more hours.",
+      fromAddress: "mailer-daemon@googlemail.com",
+      subject: "Delivery Status Notification (Delay)",
+      classification: classificationFixture({ classification: "INTERESTED" }),
+    });
+
+    const results = await pipeline.runAll(WEEKDAY_BUSINESS_HOURS);
+
+    expect(results[0].outcome).toBe("bounced");
+    expect(writeStore.messagesBounced).toHaveLength(1); // still recorded, so the board can show it
+    expect(writeStore.flaggedDealIds).toHaveLength(0); // but not sent for address correction yet
+    expect(writeStore.notesAppended).toHaveLength(0);
+  });
+
+  it("skips a message it has already recorded once, instead of reprocessing it every cycle", async () => {
+    const { pipeline, writeStore, gmailReader, gmailSender } = buildPipeline({
+      replyText: "This looks interesting, tell me more.",
+      classification: classificationFixture({ classification: "INTERESTED" }),
+      alreadyRecorded: true,
+    });
+
+    const results = await pipeline.runAll(WEEKDAY_BUSINESS_HOURS);
+
+    expect(results[0].outcome).toBe("duplicate");
+    expect(writeStore.inboundRecorded).toHaveLength(0);
+    expect(gmailSender.sent).toHaveLength(0);
+    // Still retries marking it read — the point is not reprocessing it, not giving up on the label.
+    expect(gmailReader.markedRead).toHaveLength(1);
   });
 });

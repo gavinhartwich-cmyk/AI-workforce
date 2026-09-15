@@ -136,6 +136,7 @@ function buildPipeline(replyText: string, classification: Record<string, unknown
     company: { name: "Example HVAC Co.", website: "https://example-hvac.test" },
     contact: { name: null, title: null },
     originalSubject: "Quick note about your reviews",
+    sentMessageId: "55555555-5555-4555-8555-555555555555",
   });
 
   const tools = new ToolRegistry()

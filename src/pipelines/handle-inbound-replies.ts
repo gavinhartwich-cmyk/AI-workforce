@@ -11,6 +11,7 @@ import { decideReplyAction } from "../outreach/reply-routing.js";
 import { checkSendAllowed } from "../outreach/send-guard.js";
 import { buildBookingLink } from "../outreach/booking-link.js";
 import { buildCompanyUrl } from "../outreach/app-url.js";
+import { isBounceNotification, isTemporaryDelayNotice } from "../outreach/bounce-detection.js";
 import type { OptOutStore } from "../outreach/opt-out-store.js";
 import type { OutreachControlStore } from "../outreach/outreach-control-store.js";
 import type { EmailAccountsStore } from "../db/hartwich-os/email-accounts-store.js";
@@ -20,7 +21,10 @@ export type HandleReplyResult =
   | { threadId: string; outcome: "replied"; classification: ConversationClassification; activityId: string; messageId: string }
   | { threadId: string; outcome: "suppressed" | "closed_lost" | "escalated" | "no_action"; classification: ConversationClassification }
   | { threadId: string; outcome: "deferred"; classification: ConversationClassification; reason: string }
+  | { threadId: string; outcome: "bounced" }
+  | { threadId: string; outcome: "duplicate" }
   | { threadId: string; outcome: "error"; error: string };
+
 
 /**
  * Phase 6's core loop (SPEC.md §55): classify every genuine inbound reply,
@@ -69,19 +73,67 @@ export class HandleInboundRepliesPipeline {
       }
       // Mark read regardless of outcome — an error handling it once
       // doesn't mean retrying the same message forever is the fix.
-      await this.invokeTool("mark_email_read", { accountIndex: reply.accountIndex, gmailMessageId: reply.gmailMessageId });
+      // Best-effort and LOUD on failure: this call has been silently
+      // 403ing on every single cycle since deployment (the OAuth grant
+      // for these 3 accounts is missing the gmail.modify scope), which is
+      // exactly how a bounce got reprocessed as a fresh "reply" every
+      // hour for days — get_unread_replies's own alreadyRecorded check is
+      // the real fix for that, but a failure here must never go unseen
+      // again regardless.
+      const markReadResult = await this.invokeTool("mark_email_read", {
+        accountIndex: reply.accountIndex,
+        gmailMessageId: reply.gmailMessageId,
+      });
+      if (markReadResult.status !== "succeeded") {
+        console.error(
+          `mark_email_read ${markReadResult.status} for ${reply.gmailMessageId}: ${
+            markReadResult.status === "denied" ? markReadResult.reason : markReadResult.error
+          }`
+        );
+      }
       results.push(result);
     }
     return results;
   }
 
   private async processReply(reply: MatchedReply, now: Date): Promise<HandleReplyResult> {
+    // Gmail still shows this unread (see the mark_email_read note above),
+    // but we've already turned it into an activity once — never a fresh
+    // "reply" just because the UNREAD label never actually cleared.
+    if (reply.alreadyRecorded) {
+      return { threadId: reply.threadId, outcome: "duplicate" };
+    }
+
+    // A bounce/DSN notification is not a reply from the prospect, however
+    // Gmail threads it — recording it via record_inbound_reply would move
+    // the deal to Engaged and hand its garbage body text to Conversation
+    // Intelligence, which is exactly how "address not found" turned into
+    // an autonomous reply draft asking Gavin to approve it. Caught here,
+    // before either of those things can happen.
+    if (isBounceNotification(reply.fromAddress, reply.subject)) {
+      await this.invokeBestEffort("mark_message_bounced", {
+        messageId: reply.sentMessageId,
+        reason: reply.bodyText.slice(0, 2000),
+      });
+      // A temporary "still retrying" notice isn't a permanent failure yet
+      // (see bounce-detection.ts) — don't send the deal for address
+      // correction over something Gmail itself hasn't given up on.
+      if (!isTemporaryDelayNotice(reply.subject) && reply.dealId) {
+        await this.invokeBestEffort("flag_deal_for_review", { dealId: reply.dealId });
+        await this.invokeBestEffort("append_company_note", {
+          companyId: reply.companyId,
+          note: `Email bounced (${reply.fromAddress}): ${reply.bodyText.slice(0, 300)}`,
+        });
+      }
+      return { threadId: reply.threadId, outcome: "bounced" };
+    }
+
     const recordResult = await this.invokeTool("record_inbound_reply", {
       companyId: reply.companyId,
       contactId: reply.contactId,
       dealId: reply.dealId,
       fromAddress: reply.fromAddress,
-      subject: reply.originalSubject,
+      subject: reply.subject,
       body: reply.bodyText,
       providerMessageId: reply.gmailMessageId,
       threadId: reply.threadId,
