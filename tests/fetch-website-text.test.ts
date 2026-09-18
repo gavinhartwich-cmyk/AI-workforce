@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { createFetchWebsiteTextTool } from "../src/tools/fetch-website-text.js";
+import type { ToolContext } from "../src/runtime/types.js";
+
+const CTX: ToolContext = { agentId: "test", runId: "test-run" };
 
 function pageFetch(html: string): typeof fetch {
   return (async () => new Response(html, { status: 200 })) as typeof fetch;
 }
 
-const TEST_CTX = { agentId: "test", runId: "test" };
-
 async function runTool(html: string) {
   const tool = createFetchWebsiteTextTool(pageFetch(html));
-  return tool.execute({ website: "https://example-hvac.test" }, TEST_CTX);
+  return tool.execute({ website: "https://example-hvac.test" }, CTX);
 }
 
 describe("fetch_website_text", () => {
@@ -65,7 +66,7 @@ describe("fetch_website_text", () => {
 
     // Research runs on Places data alone when a site can't be read — a dead
     // website must not take the whole candidate down with it.
-    await expect(tool.execute({ website: "https://nope.test" }, TEST_CTX)).resolves.toEqual({
+    await expect(tool.execute({ website: "https://nope.test" }, CTX)).resolves.toEqual({
       text: null,
       fallbackEmail: null,
     });
