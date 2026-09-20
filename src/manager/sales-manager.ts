@@ -19,6 +19,7 @@ import { checkAuthority, DEFAULT_AUTHORITY_POLICIES } from "./authority-policy.j
 import type { AuthorityPolicy, InterventionCandidate, WorkIntensity } from "./types.js";
 import type { ExperimentStore } from "../experiments/experiment-store.js";
 import type { EscalationStore, ManagerEscalation } from "./escalation-store.js";
+import type { FollowUpApprovalReviewer } from "./followup-approvals.js";
 import type { DiscoverResearchQualifyInput, PipelineSummary } from "../pipelines/discover-research-qualify.js";
 import { currentDiscoveryTargets, AREAS_PER_CYCLE, BASE_DISCOVERY_VOLUME, type DiscoveryTarget } from "../config/icp-targets.js";
 
@@ -135,6 +136,8 @@ export class SalesManager {
        * notify-and-file-a-task behaviour with no dedup.
        */
       escalations?: EscalationStore;
+      /** Omitted (tests, demos) skips the follow-up review entirely — same opt-in shape as escalations above. */
+      followUpApprovals?: FollowUpApprovalReviewer;
       discovery: { run(input: DiscoverResearchQualifyInput): Promise<PipelineSummary> };
       tools: ToolRegistry;
       policy: PolicyEngine;
@@ -149,6 +152,7 @@ export class SalesManager {
 
   async runAll(now: Date = new Date()): Promise<ManagerCycleResult[]> {
     await this.executeApprovedEscalations(now);
+    await this.reviewFollowUps();
     const goals = await this.deps.goals.listActive();
     const results: ManagerCycleResult[] = [];
     for (const goal of goals) results.push(await this.runCycle(goal.id, now));
@@ -312,6 +316,19 @@ export class SalesManager {
       ],
     });
     return { kind: "experiment_created", experimentId: experiment.id, name };
+  }
+
+  /**
+   * Approves any AI-drafted follow-up waiting in hartwich-os's review
+   * queue, once every sending account has finished warm-up — see
+   * followup-approvals.ts for the actual rule. Runs every cycle
+   * regardless of goal status: this isn't diagnosing a bottleneck, it's
+   * routine housekeeping on the queue, same spirit as
+   * executeApprovedEscalations running unconditionally above.
+   */
+  private async reviewFollowUps(): Promise<void> {
+    if (!this.deps.followUpApprovals) return;
+    await this.deps.followUpApprovals.reviewPending();
   }
 
   /**

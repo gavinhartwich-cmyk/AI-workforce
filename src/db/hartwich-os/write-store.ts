@@ -114,6 +114,7 @@ export interface HartwichWriteStore {
   recordInboundReply(input: RecordInboundReplyInput, actor: string): Promise<RecordInboundReplyResult>;
   moveDealToLostStage(dealId: string, actor: string): Promise<void>;
   flagDealForReview(dealId: string, actor: string): Promise<void>;
+  approveFollowUpDraft(draftId: string, actor: string): Promise<void>;
   createTask(input: CreateTaskInput, actor: string): Promise<CreateTaskResult>;
   appendCompanyNote(companyId: string, note: string, actor: string): Promise<void>;
   markMessageBounced(input: MarkMessageBouncedInput, actor: string): Promise<void>;
@@ -481,6 +482,40 @@ export class PostgresHartwichWriteStore implements HartwichWriteStore {
         action: "deal.flagged_for_review",
         entityType: "deal",
         entityId: dealId,
+        diff: auditDiff(actor),
+      });
+    });
+  }
+
+  /**
+   * The Sales Manager's own approval (src/manager/followup-approvals.ts) of
+   * an AI-drafted follow-up sitting in hartwich-os's email_drafts queue —
+   * the third deliberate write exception into hartwich-os's database,
+   * alongside outreach_control and manager_escalations. hartwich-os's own
+   * send-queued-emails cron picks up 'approved' drafts and actually sends
+   * them; this just flips the status, the same transition its own
+   * approve-and-send route makes for a human approval, minus a human.
+   *
+   * Guards on status still being 'pending_review' so two cycles racing
+   * (or a human approving it in the same window) can't double-approve —
+   * whichever update lands first is the one that sticks, drizzle reports
+   * 0 rows affected for the loser, and this treats that as a no-op rather
+   * than an error.
+   */
+  async approveFollowUpDraft(draftId: string, actor: string): Promise<void> {
+    const db = getHartwichOsDb();
+    await db.transaction(async (tx) => {
+      const updated = await tx
+        .update(emailDrafts)
+        .set({ status: "approved", approvedAt: new Date() })
+        .where(and(eq(emailDrafts.id, draftId), eq(emailDrafts.status, "pending_review")))
+        .returning({ id: emailDrafts.id });
+      if (updated.length === 0) return;
+
+      await tx.insert(auditLog).values({
+        action: "email_draft.approved_by_manager",
+        entityType: "email_draft",
+        entityId: draftId,
         diff: auditDiff(actor),
       });
     });
