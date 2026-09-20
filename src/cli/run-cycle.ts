@@ -58,7 +58,6 @@ import { PostgresEmailAccountsStore } from "../db/hartwich-os/email-accounts-sto
 
 import { DiscoverResearchQualifyPipeline } from "../pipelines/discover-research-qualify.js";
 import { ExecuteOutreachPipeline } from "../pipelines/execute-outreach.js";
-import { SendFollowUpsPipeline } from "../pipelines/send-followups.js";
 import { HandleInboundRepliesPipeline } from "../pipelines/handle-inbound-replies.js";
 
 import { PostgresGoalStore } from "../goals/goal-store.js";
@@ -70,6 +69,9 @@ import { PostgresExperimentStore } from "../experiments/experiment-store.js";
 import { PostgresFunnelReader } from "../db/hartwich-os/funnel-reader.js";
 import { PostgresAgentHealthReader } from "../db/agent-health-reader.js";
 import { PostgresAnalyticsReader } from "../db/analytics-reader.js";
+import { PostgresFollowUpDraftReader } from "../db/hartwich-os/followup-draft-reader.js";
+import { PostgresHartwichWriteStore } from "../db/hartwich-os/write-store.js";
+import { FollowUpApprovalReviewer } from "../manager/followup-approvals.js";
 import { currentDiscoveryTargets } from "../config/icp-targets.js";
 import { SalesManager } from "../manager/sales-manager.js";
 
@@ -152,7 +154,6 @@ async function main() {
 
   const discovery = new DiscoverResearchQualifyPipeline({ runtime, tools, policy, audit, budget });
   const execute = new ExecuteOutreachPipeline(outreachDeps);
-  const followups = new SendFollowUpsPipeline(outreachDeps);
   const replies = new HandleInboundRepliesPipeline(outreachDeps);
 
   // 1. Prospect Discovery — this cycle's rotating slice of North America
@@ -174,11 +175,19 @@ async function main() {
     }
   });
 
-  // 3. Follow-Ups — deals in Contacted with no reply, due per cadence.
-  await runStage("Follow-Ups", async () => {
-    const results = await followups.runAll();
-    console.log(`  ${results.length} candidate(s): ${results.map((r) => r.outcome).join(", ") || "none"}`);
-  });
+  // 3. Follow-Ups — SendFollowUpsPipeline retired from this live cycle
+  // (2026-09-20, Gavin: "it wasn't doing anything properly"). It picked
+  // the same "Contacted, no reply" candidates as hartwich-os's own
+  // email-cadence cron and sent immediately with no review, while
+  // hartwich-os's cadence drafts into email_drafts for review and sets
+  // followUpFlaggedAt to keep anything else off that deal — this pipeline
+  // never checked or set that flag, so the two could (and did) both act
+  // on the same deal. hartwich-os's email_drafts queue is now the single
+  // source of truth for follow-ups; the Sales Manager stage below reviews
+  // and approves those directly (once every account is fully warmed up)
+  // instead of this pipeline sending its own. The class and its test
+  // suite (tests/send-followups.test.ts) stay in the repo, just unused
+  // here — deleting a tested pipeline outright wasn't asked for.
 
   // 4. Inbound Replies — classify + respond/escalate.
   await runStage("Inbound Replies", async () => {
@@ -198,6 +207,11 @@ async function main() {
       forecasts: new PostgresForecastStore(),
       decisions: new PostgresManagerDecisionStore(),
     escalations: new PostgresEscalationStore(),
+      followUpApprovals: new FollowUpApprovalReviewer({
+        drafts: new PostgresFollowUpDraftReader(),
+        accounts,
+        writeStore: new PostgresHartwichWriteStore(),
+      }),
       experiments: new PostgresExperimentStore(),
       discovery,
       tools,

@@ -39,6 +39,9 @@ export class NotImplementedWriteStore implements HartwichWriteStore {
   async flagDealForReview(_dealId: string): Promise<void> {
     throw new Error("flagDealForReview: not implemented by this fake");
   }
+  async approveFollowUpDraft(_draftId: string): Promise<void> {
+    throw new Error("approveFollowUpDraft: not implemented by this fake");
+  }
   async createTask(_input: CreateTaskInput): Promise<CreateTaskResult> {
     throw new Error("createTask: not implemented by this fake");
   }

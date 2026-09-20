@@ -76,6 +76,11 @@ export function getWarmupPhase(activeSendDays: number): { activeSendDays: number
   return { activeSendDays: days, dailyLimit };
 }
 
+/** Fully graduated (WARMUP_RAMP's last tier, day 29) — mirrors hartwich-os's own isWarmupComplete. */
+export function isWarmupComplete(activeSendDays: number): boolean {
+  return activeSendDays >= 29;
+}
+
 export type SendPermission = { allowed: true } | { allowed: false; reason: string };
 
 export function canSendEmail(

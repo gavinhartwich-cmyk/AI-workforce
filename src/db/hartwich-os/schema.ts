@@ -189,6 +189,14 @@ export const emailDrafts = pgTable("email_drafts", {
   body: text("body").notNull(),
   status: emailDraftStatusEnum("status").notNull().default("pending_review"),
   kind: emailDraftKindEnum("kind").notNull().default("cold_outreach"),
+  // Present only so the Sales Manager's follow-up review (src/manager/
+  // followup-approvals.ts) can tell an AI-drafted follow-up (always has
+  // aiRunId) apart from anything else, and stamp its own approval the same
+  // way hartwich-os's own approve-and-send route does. approvedBy stays
+  // null for a Manager approval — nobody signed in did it.
+  aiRunId: uuid("ai_run_id"),
+  approvedBy: uuid("approved_by"),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
